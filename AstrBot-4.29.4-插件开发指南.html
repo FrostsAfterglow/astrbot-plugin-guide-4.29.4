@@ -1,0 +1,2225 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstrBot v4.29.4 插件开发指南</title>
+<style>
+:root { --bg:#fafafa; --fg:#24292f; --line:#d8dee4; --code:#f6f8fa; --accent:#0969da; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#c9d1d9; --line:#30363d; --code:#161b22; --accent:#58a6ff; } }
+* { box-sizing:border-box }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+.wrap { display:flex; max-width:1400px; margin:0 auto; }
+nav { width:260px; flex:none; position:sticky; top:0; height:100vh; overflow:auto; padding:24px 16px; border-right:1px solid var(--line); }
+nav a { display:block; padding:6px 10px; color:var(--accent); text-decoration:none; font-size:14px; border-radius:6px; }
+nav a:hover { background:var(--code); }
+nav h3 { margin:0 0 12px; font-size:15px; }
+main { flex:1; min-width:0; padding:32px 40px 80px; max-width:960px; }
+section { margin-bottom:56px; }
+h1 { font-size:30px; border-bottom:2px solid var(--line); padding-bottom:10px; }
+h2 { font-size:23px; margin-top:36px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+h3 { font-size:18px; margin-top:28px; }
+pre { background:var(--code); padding:14px 16px; border-radius:8px; overflow-x:auto; border:1px solid var(--line); }
+code { background:var(--code); padding:2px 5px; border-radius:4px; font-size:14px; }
+pre code { background:none; padding:0; }
+table { border-collapse:collapse; width:100%; margin:14px 0; display:block; overflow-x:auto; }
+th,td { border:1px solid var(--line); padding:8px 12px; text-align:left; }
+th { background:var(--code); }
+blockquote { border-left:4px solid var(--accent); margin:14px 0; padding:4px 16px; background:var(--code); }
+a { color:var(--accent); }
+@media (max-width:820px) { .wrap { display:block } nav { position:static; width:auto; height:auto; border-right:none; border-bottom:1px solid var(--line) } main { padding:20px 16px 60px } }
+</style></head><body><div class="wrap">
+<nav><h3>AstrBot 4.29.4 插件指南</h3><a href="#sec0">总览 · README</a>
+<a href="#sec1">01-项目结构与元数据</a>
+<a href="#sec2">02-配置Schema</a>
+<a href="#sec3">03-Star类与生命周期</a>
+<a href="#sec4">04-事件与指令</a>
+<a href="#sec5">05-消息组件与结果</a>
+<a href="#sec6">06-LLM钩子与图片管线</a>
+<a href="#sec7">07-平台API与工具</a>
+<a href="#sec8">08-发布安装与排错</a>
+<a href="#sec9">09-版本差异与避坑清单</a></nav>
+<main><section id="sec0"><h1>AstrBot v4.29.4 插件开发指南</h1>
+<blockquote>
+<p>面向 <strong>AstrBot 4.29.4</strong>（Python ≥ 3.12）的插件创建指南与代码指南。
+本指南所有 API、字段名、类型白名单、管线时序均从 <strong>4.29.4 实际安装源码</strong>逐项核对，而非照抄旧版文档或凭印象编写。
+编写日期：2026-11-14。</p>
+</blockquote>
+<hr />
+<h2>这份指南解决什么</h2>
+<p>AstrBot 的官方文档分成了「旧版指南」「新版指南」「配置」「发布」等多个页面，且部分页面已标注过时；网上流传的插件教程多为 v3.x/v4.0 时代写法，直接套到 4.29.4 会出现「照着写却加载失败」的问题。本指南做三件事：</p>
+<ol>
+<li><strong>把 4.29.4 的真实约定固化下来</strong>：哪些字段必填、哪些类型合法、config 怎么注入、钩子何时触发。</li>
+<li><strong>给出可直接运行的代码</strong>：仓库 <code>examples/</code> 下两个插件都在 AstrBot 4.29.4 / Python 3.12 环境里做过真实加载验证。</li>
+<li><strong>收录实测踩过的坑</strong>：配置类型写成 <code>number</code> 导致整个插件加载失败、安装器报「未在仓库根目录找到 metadata.yaml」其实是网络误报等，都给出根因和修复。</li>
+</ol>
+<hr />
+<h2>5 分钟：最小插件</h2>
+<p>目录放在 AstrBot 的 <code>data/plugins/astrbot_plugin_hello/</code> 下：</p>
+<pre><code>astrbot_plugin_hello/
+├── metadata.yaml      # 必需：插件身份
+└── main.py            # 必需：入口（也可命名为与目录同名的 .py）
+</code></pre>
+<p><code>metadata.yaml</code>（<code>name/desc/version/author</code> 四个字段必填且必须是非空字符串）：</p>
+<pre><code class="language-yaml">name: astrbot_plugin_hello
+desc: 一个最小示例插件
+version: 1.0.0
+author: YourName
+repo: https://github.com/YourName/astrbot_plugin_hello
+</code></pre>
+<p><code>main.py</code>：</p>
+<pre><code class="language-python">from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.star import Context, Star
+from astrbot.api import logger
+
+
+class HelloPlugin(Star):
+    def __init__(self, context: Context, config=None):
+        super().__init__(context)          # 必须调用：注入 self.context / self.logger
+        self.config = config or {}         # 4.29.4 传入的是 AstrBotConfig（dict 子类）
+
+    @filter.command(&quot;hello&quot;)               # 发送 /hello 触发
+    async def hello(self, event: AstrMessageEvent):
+        &quot;&quot;&quot;打招呼&quot;&quot;&quot;                       # docstring 会被解析为指令帮助
+        yield event.plain_result(f&quot;你好，{event.get_sender_name()}！&quot;)
+
+    async def terminate(self):
+        &quot;&quot;&quot;插件卸载/停用时调用&quot;&quot;&quot;
+        logger.info(&quot;[hello] 已卸载&quot;)
+</code></pre>
+<p>放进 <code>data/plugins/</code> 后重启 AstrBot，或在 WebUI 插件页点「重载插件」。完整可运行版本见 <code>examples/minimal/</code>（见仓库对应文件）。</p>
+<blockquote>
+<p><strong>注意</strong>：<code>@register(...)</code> 装饰器在 4.29.4 <strong>已废弃</strong>，不要再用。加载器会自动识别所有继承 <code>Star</code> 的类（源码 <code>core/star/base.py</code> 的 <code>__init_subclass__</code> + <code>core/star/star_manager.py</code> 的模块扫描）。</p>
+</blockquote>
+<hr />
+<h2>目录</h2>
+<table>
+<thead>
+<tr>
+<th>章节</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#sec1">01 项目结构与 metadata.yaml</a></td>
+<td>目录约定、入口发现规则、metadata 全字段、命名与版本约束、logo、requirements.txt</td>
+</tr>
+<tr>
+<td><a href="#sec2">02 配置 Schema（_conf_schema.json）</a></td>
+<td>10 种合法类型、全部 schema 字段、AstrBotConfig 读取、<code>type: number</code> 致命陷阱</td>
+</tr>
+<tr>
+<td><a href="#sec3">03 Star 类与生命周期</a></td>
+<td><code>__init__</code> 与 config 注入回退、initialize/terminate、self.logger、KV 存储、HTML 渲染、StarTools</td>
+</tr>
+<tr>
+<td><a href="#sec4">04 事件、指令与过滤器</a></td>
+<td>全部 <code>filter.*</code> 装饰器、带参指令、指令组、权限/平台过滤、priority、AstrMessageEvent 方法</td>
+</tr>
+<tr>
+<td><a href="#sec5">05 消息组件与结果</a></td>
+<td>消息链、全部组件、plain/chain/image_result、send、stop_event、request_llm</td>
+</tr>
+<tr>
+<td><a href="#sec6">06 LLM 钩子与 4.29.4 图片管线</a></td>
+<td>on_llm_request 等钩子签名、ProviderRequest 字段、图片预处理时序、<code>[Image unavailable]</code> 占位</td>
+</tr>
+<tr>
+<td><a href="#sec7">07 平台 API 与工具</a></td>
+<td><code>event.bot.call_action</code>、Context 常用方法、llm_tool、Skills、Web API</td>
+</tr>
+<tr>
+<td><a href="#sec8">08 发布、安装与排错</a></td>
+<td>三种安装方式、插件市场发布、常见报错速查表、调试流程</td>
+</tr>
+<tr>
+<td><a href="#sec9">09 版本差异与避坑清单</a></td>
+<td>4.29.4 相对旧版的变化、逐条避坑清单</td>
+</tr>
+</tbody>
+</table>
+<p><strong>代码指南（可直接复制运行）</strong>：</p>
+<ul>
+<li><code>examples/minimal/</code>（见仓库对应文件） —— 最小插件：指令、消息结果、生命周期。</li>
+<li><code>examples/config_and_hook/</code>（见仓库对应文件） —— 进阶插件：配置 Schema、权限指令、指令组、<code>on_llm_request</code> 改系统提示、平台 API 调用。</li>
+<li><code>tests/verify_examples.py</code>（见仓库对应文件） —— 用真实 4.29.4 环境验证示例的脚本。</li>
+</ul>
+<hr />
+<h2>黄金法则（先记住这 8 条）</h2>
+<ol>
+<li><strong>入口</strong>：<code>main.py</code>（或 <code>&lt;目录名&gt;.py</code>），类名任意，但必须继承 <code>Star</code>；处理函数必须写在插件类里，前两个参数是 <code>self, event</code>。</li>
+<li><strong>元数据</strong>：<code>metadata.yaml</code> 四个字段 <code>name / desc / version / author</code> 缺一不可，且都是非空字符串；文件名只能是 <code>metadata.yaml</code> 或 <code>metadata.yml</code>，必须在仓库根目录。</li>
+<li><strong>配置类型</strong>：<code>_conf_schema.json</code> 的 <code>type</code> 只接受 <code>int / float / bool / string / text / list / file / object / template_list / dict</code>。<strong>没有 <code>number</code></strong>，写错会在加载阶段抛 <code>TypeError</code>，整个插件加载失败。</li>
+<li><strong>构造函数</strong>：写 <code>def __init__(self, context: Context, config=None)</code> 并调用 <code>super().__init__(context)</code>。加载器先尝试 <code>config=</code> 注入，若你的 <code>__init__</code> 不接受则回退为只传 <code>context</code>。</li>
+<li><strong>日志</strong>：用 <code>from astrbot.api import logger</code> 或 <code>self.logger</code>，不要用 <code>logging.getLogger</code>；<code>self.logger</code> 是插件专属 logger，可在 WebUI 单独调级别。</li>
+<li><strong>返回结果</strong>：<code>yield event.plain_result(...)</code> / <code>yield event.chain_result([...])</code>，或 <code>return</code> 一个 <code>MessageEventResult</code>。处理函数是异步的。</li>
+<li><strong>网络请求</strong>：用 <code>aiohttp</code> / <code>httpx</code> 等异步库，<strong>不要</strong>用同步的 <code>requests</code>（会阻塞事件循环）。</li>
+<li><strong>持久化数据</strong>：写到 <code>data/</code> 下（推荐 <code>StarTools.get_data_dir()</code>），不要写进插件自身目录 —— 插件更新/重装会覆盖。</li>
+</ol>
+<hr />
+<h2>适用范围说明</h2>
+<ul>
+<li>本指南针对 <strong>AstrBot 4.29.4</strong>，对应 Python <strong>≥ 3.12</strong>。旧版（如 4.14.6 及更早）部分 API 路径不同，见 <a href="#sec9">09 版本差异</a>。</li>
+<li>「AstrBot 泡泡版」等手机端打包发行版内置的就是 AstrBot 组件；插件目录、加载机制与桌面版一致，但<strong>不同运行环境的文件系统互不相通</strong>：在别处创建的 Linux 工作区 / Rootfs 里 <code>mkdir</code> 不出泡泡版的插件目录。</li>
+<li>官方资料：<a href="https://docs.astrbot.app/dev/star/plugin-new.html">插件开发指南（新）</a>、<a href="https://docs.astrbot.app/dev/star/guides/plugin-config.html">插件配置</a>、<a href="https://docs.astrbot.app/dev/star/plugin-publish.html">发布到插件市场</a>。本指南与官方文档冲突时，以 4.29.4 源码为准，并在文中标注差异。</li>
+</ul>
+<hr />
+<h2>验证方式</h2>
+<p>仓库内所有示例代码都可以在装有 AstrBot 4.29.4 的环境里验证：</p>
+<pre><code class="language-bash">python -m py_compile examples/minimal/main.py examples/config_and_hook/main.py
+python tests/verify_examples.py
+</code></pre>
+<p><code>verify_examples.py</code> 会真实执行：metadata 校验、<code>AstrBotConfig(schema=...)</code> 构造、插件模块导入、<code>filter</code> 装饰器注册计数、压缩包合法性检查。不是纸面代码。</p></section><section id="sec1"><h1>01 项目结构与 metadata.yaml</h1>
+<h2>插件放在哪</h2>
+<p>AstrBot 从两个位置扫描插件（源码 <code>core/star/star_manager.py</code>）：</p>
+<ul>
+<li><code>data/plugins/</code> —— 用户插件（你要放的地方）</li>
+<li>内置保留插件目录（<code>builtin_stars/</code>）</li>
+</ul>
+<p>插件是<strong>一个目录</strong>，目录名建议 <code>astrbot_plugin_xxx</code>（官方命名惯例：小写、无空格、尽量短、以 <code>astrbot_plugin_</code> 开头）。</p>
+<h2>目录结构</h2>
+<pre><code>astrbot_plugin_xxx/
+├── main.py                 # 必需：入口
+├── metadata.yaml           # 必需：身份信息（或 metadata.yml）
+├── _conf_schema.json       # 可选：配置定义，有则自动生成配置文件并注入 __init__
+├── requirements.txt        # 可选：pip 依赖
+├── logo.png                # 可选：1:1，推荐 256×256，市场展示用
+├── README.md               # 建议
+├── skills/                 # 可选：随插件提供的 Skill（SKILL.md）
+└── .astrbot-plugin/i18n/   # 可选：国际化 JSON
+</code></pre>
+<h3>入口发现规则（源码 <code>_get_modules</code>）</h3>
+<p>加载器遍历 <code>data/plugins/</code> 下的每个目录：</p>
+<ol>
+<li>有 <code>main.py</code> → 导入 <code>main</code> 模块；</li>
+<li>否则有 <code>&lt;目录名&gt;.py</code> → 导入同名模块；</li>
+<li>两者都没有 → 跳过，并在日志里写 <code>Plugin xxx has neither main.py nor xxx.py; skipping it.</code>；</li>
+<li>名字以 <code>.plugin-install-</code> / <code>.plugin-upload-</code> / <code>.plugin-backup-</code> 开头的目录被跳过（安装暂存与回滚备份）。</li>
+</ol>
+<p>插件模块以包形式导入，因此<strong>支持相对导入</strong>（<code>from .core.xxx import ...</code>），但子目录要有 <code>__init__.py</code> 更稳妥。</p>
+<h3>类是怎么被发现的</h3>
+<p>不需要任何注册装饰器。<code>Star.__init_subclass__</code>（<code>core/star/base.py</code>）在类定义时把 <code>StarMetadata</code> 写入全局 <code>star_map</code>；<code>star_manager.load()</code> 扫描模块里所有继承 <code>Star</code> 的类并实例化。</p>
+<blockquote>
+<p><code>@register(name=..., author=..., ...)</code>（即 <code>register_star</code>）在 4.29.4 的源码里已明确标注 <code>[DEPRECATED]</code>，仅保留兼容。元数据以 <code>metadata.yaml</code> 为准。</p>
+</blockquote>
+<h2>metadata.yaml 字段</h2>
+<h3>必填（4 个，且必须是非空字符串）</h3>
+<p>源码 <code>core/star/updater.py</code>：<code>PLUGIN_METADATA_REQUIRED_FIELDS = ("name", "desc", "version", "author")</code>。任一缺失或非字符串/空串 → <code>插件元数据校验失败</code> → 插件无法加载。</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>插件标识符，英文、唯一、小写、无空格。建议与仓库名一致</td>
+</tr>
+<tr>
+<td><code>desc</code></td>
+<td>详细描述，支持多行 / Markdown。可写成 <code>description</code>（会被规范化为 <code>desc</code>）</td>
+</tr>
+<tr>
+<td><code>version</code></td>
+<td>版本号，建议语义化版本（<code>1.0.0</code>）；带不带 <code>v</code> 前缀都可，市场按字符串比较递增</td>
+</tr>
+<tr>
+<td><code>author</code></td>
+<td>作者名</td>
+</tr>
+</tbody>
+</table>
+<h3>可选字段（4.29.4 实际读取的）</h3>
+<p>源码 <code>star_manager._load_plugin_metadata()</code>：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>display_name</code></td>
+<td>str</td>
+<td>WebUI / 市场展示名（v4.5.0+）</td>
+</tr>
+<tr>
+<td><code>short_desc</code></td>
+<td>str</td>
+<td>市场卡片短描述，缺省回退 <code>desc</code></td>
+</tr>
+<tr>
+<td><code>repo</code></td>
+<td>str</td>
+<td>仓库地址。没有它无法在面板里更新插件</td>
+</tr>
+<tr>
+<td><code>support_platforms</code></td>
+<td>list[str]</td>
+<td>声明支持的适配器 ID，见下表</td>
+</tr>
+<tr>
+<td><code>astrbot_version</code></td>
+<td>str</td>
+<td>要求的 AstrBot 版本范围，PEP 440 格式，<strong>不要加 <code>v</code></strong>，如 <code>"&gt;=4.16,&lt;5"</code></td>
+</tr>
+<tr>
+<td><code>views</code></td>
+<td>list</td>
+<td>插件注册的页面元数据；<code>pages</code> 是兼容别名</td>
+</tr>
+<tr>
+<td><code>i18n</code></td>
+<td>—</td>
+<td>从 <code>.astrbot-plugin/i18n/*.json</code> 自动加载，不写在 yaml 里</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><code>tags</code>、<code>social_link</code> 是<strong>插件市场</strong>读取的字段，AstrBot 本体的 <code>_load_plugin_metadata</code> 不解析，但发布到市场时建议填写。</p>
+</blockquote>
+<h3>完整示例</h3>
+<pre><code class="language-yaml">name: astrbot_plugin_example
+display_name: 示例插件
+short_desc: 一句话介绍
+desc: |
+  详细描述插件功能、指令、配置。
+  支持多行与 Markdown。
+version: 1.2.0
+author: YourName
+repo: https://github.com/YourName/astrbot_plugin_example
+astrbot_version: &quot;&gt;=4.16,&lt;5&quot;
+support_platforms:
+  - aiocqhttp
+  - qq_official
+tags:
+  - 工具
+social_link: https://github.com/YourName
+</code></pre>
+<h3><code>support_platforms</code> 可用值</h3>
+<p>源码 <code>core/star/filter/platform_adapter_type.py</code> 的 <code>ADAPTER_NAME_2_TYPE</code> 键（4.29.4 全量）：</p>
+<p><code>aiocqhttp</code>、<code>qq_official</code>、<code>qq_official_webhook</code>、<code>telegram</code>、<code>wecom</code>、<code>wecom_ai_bot</code>、<code>lark</code>、<code>dingtalk</code>、<code>discord</code>、<code>slack</code>、<code>kook</code>、<code>vocechat</code>、<code>weixin_official_account</code>、<code>weixin_oc</code>、<code>satori</code>、<code>misskey</code>、<code>line</code>、<code>matrix</code>、<code>mattermost</code>、<code>webchat</code>。</p>
+<blockquote>
+<p>不填 = 不声明限制，插件在所有平台都会被加载。填错的值不会报错，只是不生效。</p>
+</blockquote>
+<h3><code>astrbot_version</code> 行为</h3>
+<p>不满足版本范围时，插件被<strong>阻止加载</strong>并提示版本不兼容；WebUI 安装时可勾选「无视警告，继续安装」跳过检查。格式遵循 PEP 440：<code>&gt;=4.17.0</code>、<code>&gt;=4.16,&lt;5</code>、<code>~=4.17</code>。</p>
+<h2>安装器对 metadata 的额外要求</h2>
+<p>从 GitHub 地址 / zip 安装时（<code>core/star/updater.py</code>）：</p>
+<ul>
+<li>文件名只能是 <code>metadata.yaml</code> 或 <code>metadata.yml</code>；</li>
+<li>必须在<strong>仓库根目录</strong>（zip 则允许有一层顶层目录，安装器会自动识别）；</li>
+<li>必须是 <strong>UTF-8</strong> 编码（可带 BOM）；</li>
+<li>单个文件 ≤ <strong>1 MB</strong>；</li>
+<li>必须是合法 YAML，且解析后是 dict，通过上面的必填字段校验。</li>
+</ul>
+<p>安装器实际请求的是 <code>https://raw.githubusercontent.com/{owner}/{repo}/HEAD/metadata.yaml</code>（不带分支时用 <code>HEAD</code>），超时 15 秒。详见 <a href="#sec8">08 排错</a>。</p>
+<h2>requirements.txt</h2>
+<p>标准 pip 格式。4.29.4 在加载插件前会做依赖预检（<code>_ensure_plugin_requirements</code> → <code>plan_missing_requirements_install</code>），只安装缺失/版本不符的包；导入失败时还会尝试从已安装依赖恢复，再不行才重装。</p>
+<pre><code>aiohttp&gt;=3.9
+Pillow&gt;=10.0
+</code></pre>
+<p>注意：不要在这里写 <code>astrbot</code> 本身；依赖冲突会在日志里报 <code>Dependency conflict in plugin ...</code>。</p>
+<h2>命名与体积红线（发布到市场时）</h2>
+<ul>
+<li>仓库必须 <strong>public</strong>，根目录直接是插件文件（不要再套一层目录）；</li>
+<li>插件 zip <strong>≤ 16 MB</strong>，超限 CI 直接拒绝；</li>
+<li><code>name</code> 与仓库名一致；</li>
+<li>不要提交 <code>.git/</code>、<code>__pycache__/</code>、<code>node_modules/</code>、<code>data/</code>。</li>
+</ul></section><section id="sec2"><h1>02 配置 Schema（_conf_schema.json）</h1>
+<h2>作用</h2>
+<p>在插件目录放 <code>_conf_schema.json</code>，AstrBot 会：</p>
+<ol>
+<li>依据 schema 生成默认配置，保存为 <code>data/config/&lt;插件目录名&gt;_config.json</code>；</li>
+<li>在 WebUI 插件配置弹窗里渲染可视化表单；</li>
+<li>实例化插件时把配置对象作为 <code>config</code> 传给 <code>__init__</code>。</li>
+</ol>
+<p>配置对象类型是 <code>AstrBotConfig</code>（<code>astrbot.core.config.astrbot_config</code>），<strong>继承自 <code>dict</code></strong>，拥有字典全部方法，另有 <code>save_config()</code>。</p>
+<h2>致命陷阱：<code>type</code> 只能用这 10 种</h2>
+<p>源码 <code>core/config/default.py</code> 的 <code>DEFAULT_VALUE_MAP</code> 与 <code>astrbot_config._config_schema_to_default_config()</code>：</p>
+<pre><code class="language-python">DEFAULT_VALUE_MAP = {
+    &quot;int&quot;: 0, &quot;float&quot;: 0.0, &quot;bool&quot;: False,
+    &quot;string&quot;: &quot;&quot;, &quot;text&quot;: &quot;&quot;,
+    &quot;list&quot;: [], &quot;file&quot;: [],
+    &quot;object&quot;: {}, &quot;template_list&quot;: [], &quot;dict&quot;: {},
+}
+</code></pre>
+<p>只要 <code>type</code> 不在这个字典里，加载阶段立刻抛：</p>
+<pre><code>TypeError: 不受支持的配置类型 number。支持的类型有：dict_keys(['int', 'float', 'bool', 'string', 'text', 'list', 'file', 'object', 'template_list', 'dict'])
+</code></pre>
+<p><strong>后果是整个插件加载失败</strong>（<code>star_manager.load</code> 里构造 <code>AstrBotConfig</code> 时抛错，插件进「加载失败」列表），不是一个配置项失效。</p>
+<blockquote>
+<p>这是本指南收录的实测事故：把数值配置写成 <code>"type": "number"</code>（很多框架/JSON Schema 的写法），在 AstrBot 里非法。
+<strong>数值请用 <code>int</code>（整数）或 <code>float</code>（可小数）</strong>。写 <code>float</code> 时 <code>default</code> 写 <code>15</code> 也没问题 —— <code>_parse_schema</code> 不校验默认值类型，只是直接赋值；插件里建议自行 <code>float(...)</code> / <code>int(...)</code> 归一化。</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>你想表达</th>
+<th>正确 <code>type</code></th>
+<th>默认值缺省时</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>开关</td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+</tr>
+<tr>
+<td>整数（秒数、次数）</td>
+<td><code>int</code></td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td>小数（MB、比例）</td>
+<td><code>float</code></td>
+<td><code>0.0</code></td>
+</tr>
+<tr>
+<td>单行文本 / Token</td>
+<td><code>string</code></td>
+<td><code>""</code></td>
+</tr>
+<tr>
+<td>多行长文本</td>
+<td><code>text</code></td>
+<td><code>""</code></td>
+</tr>
+<tr>
+<td>列表</td>
+<td><code>list</code></td>
+<td><code>[]</code></td>
+</tr>
+<tr>
+<td>文件上传</td>
+<td><code>file</code></td>
+<td><code>[]</code></td>
+</tr>
+<tr>
+<td>嵌套对象</td>
+<td><code>object</code></td>
+<td><code>{}</code></td>
+</tr>
+<tr>
+<td>模板列表</td>
+<td><code>template_list</code></td>
+<td><code>[]</code></td>
+</tr>
+<tr>
+<td>自由字典</td>
+<td><code>dict</code></td>
+<td><code>{}</code></td>
+</tr>
+</tbody>
+</table>
+<h2>全部 schema 字段</h2>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>适用</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type</code></td>
+<td>全部</td>
+<td><strong>必填</strong>，10 种之一</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>全部</td>
+<td>配置描述，建议一句话</td>
+</tr>
+<tr>
+<td><code>default</code></td>
+<td>全部</td>
+<td>默认值，省略则用上表缺省值</td>
+</tr>
+<tr>
+<td><code>hint</code></td>
+<td>全部</td>
+<td>悬浮问号提示</td>
+</tr>
+<tr>
+<td><code>obvious_hint</code></td>
+<td>全部</td>
+<td>让 hint 醒目显示</td>
+</tr>
+<tr>
+<td><code>items</code></td>
+<td><code>object</code> / <code>list</code> / <code>dict</code></td>
+<td>子 schema 或元素类型</td>
+</tr>
+<tr>
+<td><code>invisible</code></td>
+<td>全部</td>
+<td><code>true</code> 时不在面板显示</td>
+</tr>
+<tr>
+<td><code>secret</code></td>
+<td><code>string</code> / 字符串 <code>list</code></td>
+<td>密码框遮罩。<strong>只遮显示，不加密落盘</strong>，插件不要回显/记录</td>
+</tr>
+<tr>
+<td><code>options</code></td>
+<td>字符串类</td>
+<td>下拉可选项列表</td>
+</tr>
+<tr>
+<td><code>labels</code></td>
+<td>配合 <code>options</code></td>
+<td>按索引对应的展示名</td>
+</tr>
+<tr>
+<td><code>subtitles</code></td>
+<td>配合 <code>options</code></td>
+<td>下拉项副标题</td>
+</tr>
+<tr>
+<td><code>slider</code></td>
+<td><code>int</code> / <code>float</code></td>
+<td><code>{"min":1,"max":100,"step":1}</code></td>
+</tr>
+<tr>
+<td><code>editor_mode</code></td>
+<td>文本类</td>
+<td>启用代码编辑器</td>
+</tr>
+<tr>
+<td><code>editor_language</code> / <code>editor_theme</code></td>
+<td>文本类</td>
+<td>默认 <code>json</code> / <code>vs-light</code></td>
+</tr>
+<tr>
+<td><code>enum</code></td>
+<td>字符串类</td>
+<td>可枚举值（与 <code>options</code> 二选一即可，面板表现以 <code>options</code> 为佳）</td>
+</tr>
+<tr>
+<td><code>file_types</code></td>
+<td><code>file</code></td>
+<td>允许的扩展名，如 <code>["pdf","docx"]</code></td>
+</tr>
+<tr>
+<td><code>template_schema</code></td>
+<td><code>dict</code></td>
+<td>可视化编辑 dict 的模板</td>
+</tr>
+<tr>
+<td><code>templates</code> / <code>display_item</code> / <code>hide_hint_in_list</code></td>
+<td><code>template_list</code></td>
+<td>模板列表定义</td>
+</tr>
+<tr>
+<td><code>_special</code></td>
+<td>特定</td>
+<td>调用内置选择器：<code>select_provider</code>、<code>select_persona</code>、<code>select_knowledgebase</code>、<code>sender_id</code>、<code>umo</code> 等</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>源码提醒：<code>select_providers</code>、<code>provider_pool</code>、<code>persona_pool</code>、<code>t2i_template</code> 等 <code>_special</code> 值属于 Core 内部实现，随时可能变，<strong>插件不要用</strong>。</p>
+</blockquote>
+<h2>最小可用示例</h2>
+<pre><code class="language-json">{
+  &quot;ENABLED&quot;: {
+    &quot;description&quot;: &quot;是否启用&quot;,
+    &quot;type&quot;: &quot;bool&quot;,
+    &quot;default&quot;: true
+  },
+  &quot;MAX_SIZE_MB&quot;: {
+    &quot;description&quot;: &quot;单文件最大体积（MB，可小数）&quot;,
+    &quot;type&quot;: &quot;float&quot;,
+    &quot;default&quot;: 15,
+    &quot;slider&quot;: {&quot;min&quot;: 1, &quot;max&quot;: 100, &quot;step&quot;: 0.5}
+  },
+  &quot;RETRY_COUNT&quot;: {
+    &quot;description&quot;: &quot;失败重试次数&quot;,
+    &quot;type&quot;: &quot;int&quot;,
+    &quot;default&quot;: 3
+  },
+  &quot;MODE&quot;: {
+    &quot;description&quot;: &quot;运行模式&quot;,
+    &quot;type&quot;: &quot;string&quot;,
+    &quot;default&quot;: &quot;normal&quot;,
+    &quot;options&quot;: [&quot;normal&quot;, &quot;verbose&quot;],
+    &quot;labels&quot;: [&quot;常规&quot;, &quot;详细&quot;]
+  },
+  &quot;API_KEY&quot;: {
+    &quot;description&quot;: &quot;接口密钥&quot;,
+    &quot;type&quot;: &quot;string&quot;,
+    &quot;default&quot;: &quot;&quot;,
+    &quot;secret&quot;: true
+  }
+}
+</code></pre>
+<h2>嵌套 object / list / file</h2>
+<pre><code class="language-json">{
+  &quot;server&quot;: {
+    &quot;description&quot;: &quot;服务设置&quot;,
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;items&quot;: {
+      &quot;host&quot;: {&quot;type&quot;: &quot;string&quot;, &quot;default&quot;: &quot;127.0.0.1&quot;},
+      &quot;port&quot;: {&quot;type&quot;: &quot;int&quot;, &quot;default&quot;: 8080}
+    }
+  },
+  &quot;whitelist&quot;: {
+    &quot;description&quot;: &quot;允许的 ID&quot;,
+    &quot;type&quot;: &quot;list&quot;,
+    &quot;default&quot;: [],
+    &quot;items&quot;: {&quot;type&quot;: &quot;string&quot;}
+  },
+  &quot;attachments&quot;: {
+    &quot;description&quot;: &quot;上传附件&quot;,
+    &quot;type&quot;: &quot;file&quot;,
+    &quot;default&quot;: [],
+    &quot;file_types&quot;: [&quot;pdf&quot;, &quot;docx&quot;]
+  }
+}
+</code></pre>
+<p><code>object</code> 的 <code>_parse_schema</code> 会递归解析 <code>items</code> 生成嵌套默认字典；<code>template_list</code> 走单独分支，直接采用 <code>default</code>。</p>
+<h2>在插件里读配置</h2>
+<pre><code class="language-python">from astrbot.api.star import Context, Star
+
+
+class MyPlugin(Star):
+    def __init__(self, context: Context, config=None):
+        super().__init__(context)
+        self.config = config if isinstance(config, dict) else {}
+
+    def _conf(self, key, default):
+        &quot;&quot;&quot;带兜底的读取：兼容 4.29.4 注入、旧版只传 context、以及直接实例化测试。&quot;&quot;&quot;
+        if isinstance(self.config, dict) and key in self.config:
+            return self.config[key]
+        try:
+            cfg = self.context.get_config()
+            if isinstance(cfg, dict) and key in cfg:
+                return cfg[key]
+        except Exception:
+            pass
+        return default
+
+    async def foo(self):
+        enabled = self._conf(&quot;ENABLED&quot;, True)
+        max_mb = float(self._conf(&quot;MAX_SIZE_MB&quot;, 15))   # 自己归一化类型
+        retry = int(self._conf(&quot;RETRY_COUNT&quot;, 3))
+</code></pre>
+<p>要点：</p>
+<ul>
+<li>加载器（<code>star_manager.load</code>，约 1228 行）先尝试 <code>star_cls_type(context=..., config=plugin_config)</code>；若抛 <code>TypeError</code>（你的 <code>__init__</code> 不接受 <code>config</code>），<strong>自动回退</strong>为只传 <code>context</code>。所以写 <code>def __init__(self, context)</code> 也不会崩，但拿不到配置。</li>
+<li>建议始终把 <code>config</code> 存到 <code>self.config</code>，并用 <code>_conf()</code> 兜底 —— 面板里用户删了配置项、配置迁移、单元测试直接实例化时都不会 <code>KeyError</code>。</li>
+<li>修改后可调用 <code>self.config.save_config()</code> 持久化（注意并发与用户面板编辑的覆盖关系）。</li>
+<li>发布新版本更新 schema 时，AstrBot 会递归补齐缺失项、移除已不存在的项。</li>
+</ul>
+<h2>回归测试：锁死类型合法性</h2>
+<p>把这段放进插件的测试里，可以在升级 AstrBot 或改 schema 时立刻发现问题：</p>
+<pre><code class="language-python">import json, pathlib
+from astrbot.core.config.default import DEFAULT_VALUE_MAP
+from astrbot.core.config.astrbot_config import AstrBotConfig
+
+schema = json.loads(pathlib.Path(&quot;_conf_schema.json&quot;).read_text(encoding=&quot;utf-8-sig&quot;))
+bad = {k: v.get(&quot;type&quot;) for k, v in schema.items() if v.get(&quot;type&quot;) not in DEFAULT_VALUE_MAP}
+assert not bad, f&quot;存在不支持的配置类型: {bad}&quot;
+
+cfg = AstrBotConfig(config_path=&quot;/tmp/test_config.json&quot;, schema=schema)
+assert cfg[&quot;ENABLED&quot;] is True
+</code></pre>
+<p>完整可运行版本见 <code>examples/config_and_hook/tests/test_conf_schema.py</code>（见仓库对应文件）。</p></section><section id="sec3"><h1>03 Star 类与生命周期</h1>
+<h2>继承与实例化</h2>
+<p>所有插件继承 <code>Star</code>（<code>astrbot.api.star.Star</code> → <code>astrbot.core.star.base.Star</code>）。<code>Star</code> 同时混入 <code>CommandParserMixin</code> 和 <code>PluginKVStoreMixin</code>。</p>
+<p>源码 <code>star_manager.load()</code> 的实例化逻辑（约 1222–1240 行）：</p>
+<pre><code class="language-python"># 注入类属性，便于 __init__ 读取
+setattr(star_cls_type, &quot;name&quot;, p_name)
+setattr(star_cls_type, &quot;author&quot;, p_author)
+setattr(star_cls_type, &quot;plugin_id&quot;, plugin_id)
+
+if plugin_config and star_cls_type:
+    try:
+        star_cls = star_cls_type(context=self.context, config=plugin_config)
+    except TypeError:
+        star_cls = star_cls_type(context=self.context)   # 回退
+elif star_cls_type:
+    star_cls = star_cls_type(context=self.context)
+</code></pre>
+<p>三个推论：</p>
+<ol>
+<li><strong><code>config</code> 是关键字参数</strong>，类型 <code>AstrBotConfig</code>（dict 子类）；有 <code>_conf_schema.json</code> 才非空。</li>
+<li>写 <code>def __init__(self, context)</code> 也能加载（走回退），但读不到配置。</li>
+<li>类名任意、不需要 <code>@register</code>；<code>Star.__init_subclass__</code> 自动登记到 <code>star_map</code>。</li>
+</ol>
+<h2>标准构造函数</h2>
+<pre><code class="language-python">from astrbot.api.star import Context, Star
+
+
+class MyPlugin(Star):
+    def __init__(self, context: Context, config=None):
+        super().__init__(context)      # 必须！否则没有 self.context / self.logger
+        self.config = config if isinstance(config, dict) else {}
+        # 其他初始化：读配置、建缓存、创建后台任务等
+</code></pre>
+<p><code>super().__init__(context)</code> 做两件事（<code>core/star/base.py</code>）：</p>
+<ul>
+<li><code>self.context = context</code></li>
+<li>从 <code>star_map</code> 解析插件名，绑定<strong>插件专属 logger</strong> 到 <code>self.logger</code>（<code>astrbot.plugin.&lt;plugin_name&gt;</code>，级别可在 WebUI 单独设置）</li>
+</ul>
+<blockquote>
+<p>若插件类把 <code>logger</code> 定义成只读 property，<code>Star.__init__</code> 会捕获 <code>AttributeError</code> 并保留你自己的实现。</p>
+</blockquote>
+<h2>生命周期钩子</h2>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>触发时机</th>
+<th>是否异步</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td>插件实例化</td>
+<td>同步</td>
+</tr>
+<tr>
+<td><code>initialize()</code></td>
+<td>插件加载完成后</td>
+<td><strong>async</strong>，源码 <code>star_manager.py:1424</code> 处 <code>await metadata.star_cls.initialize()</code></td>
+</tr>
+<tr>
+<td><code>terminate()</code></td>
+<td>插件卸载 / 停用 / 重载前</td>
+<td><strong>async</strong>，源码 <code>~1966</code> 处 <code>await star_metadata.star_cls.terminate()</code></td>
+</tr>
+<tr>
+<td><code>__del__</code></td>
+<td>对象析构（<code>Star</code> 基类有定义）</td>
+<td>同步</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">class MyPlugin(Star):
+    async def initialize(self):
+        &quot;&quot;&quot;适合：建表、恢复缓存、启动后台任务、注册 Web API&quot;&quot;&quot;
+        self.logger.info(&quot;[myplugin] 初始化完成&quot;)
+
+    async def terminate(self):
+        &quot;&quot;&quot;适合：取消任务、关闭连接、flush 数据&quot;&quot;&quot;
+        ...
+</code></pre>
+<blockquote>
+<p>不要用 <code>initialize</code> 做重活阻塞加载；可用 <code>self.context.register_task(awaitable, desc)</code> 托管后台协程。</p>
+</blockquote>
+<h2>self.logger 与全局 logger</h2>
+<p>两种写法都正确：</p>
+<pre><code class="language-python">from astrbot.api import logger          # 代理对象，按调用模块自动路由到插件 logger
+logger.info(&quot;...&quot;)
+
+self.logger.info(&quot;...&quot;)                  # 插件专属，推荐
+</code></pre>
+<p><code>astrbot.api.logger</code> 是 <code>_PluginContextLogger</code> 代理（源码 <code>api/__init__.py</code>），会根据调用者的 <code>__name__</code> 在 <code>star_map</code> 里找对应插件的 logger；非插件调用者回退到全局 <code>astrbot</code> logger。<strong>不要用 <code>logging.getLogger(...)</code></strong>，否则失去 WebUI 的按插件级别控制。</p>
+<h2>内置工具方法（Star 基类）</h2>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>await self.text_to_image(text, return_url=True, template_name=None, umo=None)</code></td>
+<td>用 t2i 服务把文本渲染成图片，返回 URL 或文件路径</td>
+</tr>
+<tr>
+<td><code>await self.html_render(tmpl, data, return_url=True, options=None, umo=None)</code></td>
+<td>用 Jinja2 HTML 模板渲染成图片</td>
+</tr>
+<tr>
+<td><code>self.parse_commands(message)</code> / <code>self.regex_match(message, command)</code></td>
+<td><code>CommandParserMixin</code> 提供的指令解析辅助</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">from astrbot.api.message_components import Image
+
+async def render(self, event):
+    url = await self.html_render(&quot;&lt;h1&gt;{{ title }}&lt;/h1&gt;&quot;, {&quot;title&quot;: &quot;报告&quot;})
+    yield event.chain_result([Image.fromURL(url)])
+</code></pre>
+<h2>KV 持久化（PluginKVStoreMixin）</h2>
+<p><code>Star</code> 自带三个异步方法，数据由 AstrBot 统一管理，不必自己建文件：</p>
+<pre><code class="language-python">await self.put_kv_data(&quot;counter&quot;, 1)
+n = await self.get_kv_data(&quot;counter&quot;, 0)
+await self.delete_kv_data(&quot;counter&quot;)
+</code></pre>
+<p>源码签名：<code>put_kv_data(key, value)</code>、<code>get_kv_data(key, default) -&gt; value | None</code>、<code>delete_kv_data(key)</code>。</p>
+<h2>StarTools：数据目录与工具管理</h2>
+<p><code>astrbot.api.star.StarTools</code> 是类方法集合（源码 <code>core/star/star_tools.py</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>StarTools.get_data_dir(plugin_name=None)</code></td>
+<td>返回 <code>data/plugin_data/&lt;name&gt;</code>，自动创建目录；不传参则从调用栈推断插件名</td>
+</tr>
+<tr>
+<td><code>await StarTools.send_message(...)</code> / <code>create_message(...)</code> / <code>create_event(...)</code></td>
+<td>主动构造/发送消息</td>
+</tr>
+<tr>
+<td><code>StarTools.activate_llm_tool(name)</code> / <code>deactivate_llm_tool(name)</code></td>
+<td>启用/停用 LLM 工具</td>
+</tr>
+<tr>
+<td><code>StarTools.register_llm_tool(...)</code> / <code>unregister_llm_tool(name)</code></td>
+<td>注册/注销工具</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">from astrbot.api.star import StarTools
+
+data_dir = StarTools.get_data_dir(&quot;astrbot_plugin_xxx&quot;)
+(data_dir / &quot;cache.json&quot;).write_text(&quot;{}&quot;, encoding=&quot;utf-8&quot;)
+</code></pre>
+<blockquote>
+<p>官方开发原则：持久化数据放 <code>data/</code> 下，<strong>不要写进插件自身目录</strong>，否则插件更新/重装会覆盖。</p>
+</blockquote>
+<h2>Context 常用方法速查</h2>
+<p><code>self.context</code> 是 <code>Context</code>（<code>core/star/context.py</code>），常用：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_config(umo=None) -&gt; AstrBotConfig</code></td>
+<td>读取（会话级）主配置</td>
+</tr>
+<tr>
+<td><code>await send_message(session, message_chain)</code></td>
+<td>按 <code>unified_msg_origin</code> 主动发消息</td>
+</tr>
+<tr>
+<td><code>await llm_generate(...)</code> / <code>await tool_loop_agent(...)</code></td>
+<td>直接调用 LLM / Agent</td>
+</tr>
+<tr>
+<td><code>get_using_provider(umo=None)</code> / <code>get_all_providers()</code></td>
+<td>获取模型提供商</td>
+</tr>
+<tr>
+<td><code>get_all_stars()</code> / <code>get_registered_star(name)</code></td>
+<td>查其他插件</td>
+</tr>
+<tr>
+<td><code>get_platform(type)</code> / <code>get_platform_inst(id)</code></td>
+<td>取平台适配器实例</td>
+</tr>
+<tr>
+<td><code>get_db()</code></td>
+<td>数据库</td>
+</tr>
+<tr>
+<td><code>register_web_api(...)</code></td>
+<td>注册自定义 Web API</td>
+</tr>
+<tr>
+<td><code>register_commands(...)</code> / <code>register_task(awaitable, desc)</code></td>
+<td>动态注册指令 / 后台任务</td>
+</tr>
+<tr>
+<td><code>add_llm_tools(*tools)</code> / <code>register_llm_tool(...)</code></td>
+<td>注册函数工具</td>
+</tr>
+<tr>
+<td><code>get_event_queue()</code></td>
+<td>事件队列</td>
+</tr>
+</tbody>
+</table>
+<p>详见 <a href="#sec7">07 平台 API 与工具</a>。</p>
+<h2>常见构造错误</h2>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AttributeError: 'XxxPlugin' object has no attribute 'context'</code></td>
+<td>没调 <code>super().__init__(context)</code></td>
+</tr>
+<tr>
+<td>配置全是默认值 / 读不到</td>
+<td><code>__init__</code> 只接 <code>context</code>，触发加载器回退；或没把 <code>config</code> 存到 <code>self.config</code></td>
+</tr>
+<tr>
+<td><code>TypeError: 不受支持的配置类型 ...</code></td>
+<td><code>_conf_schema.json</code> 的 <code>type</code> 非法，见 <a href="#sec2">02 配置 Schema</a></td>
+</tr>
+<tr>
+<td>插件出现在「加载失败」列表</td>
+<td>看日志 Traceback；<code>__init__</code> 里抛任何异常都会导致加载失败</td>
+</tr>
+</tbody>
+</table></section><section id="sec4"><h1>04 事件、指令与过滤器</h1>
+<h2>导入</h2>
+<pre><code class="language-python">from astrbot.api.event import AstrMessageEvent, filter
+</code></pre>
+<blockquote>
+<p><strong>必须导入 <code>filter</code></strong>（即 <code>astrbot.api.event.filter</code> 这个模块），否则会撞上 Python 内置的高阶函数 <code>filter</code>。所有装饰器都挂在它下面。</p>
+</blockquote>
+<p>也可以从 <code>astrbot.api.all</code> 直接导入函数形式（<code>command</code>、<code>event_message_type</code> 等），但插件社区主流写法是 <code>@filter.xxx</code>。</p>
+<h2>装饰器总表（4.29.4 全量）</h2>
+<p>来源 <code>astrbot/api/event/filter/__init__.py</code> 的 <code>__all__</code> 与 <code>core/star/register/star_handler.py</code> 的注册函数。</p>
+<h3>消息事件类（EventType.AdapterMessageEvent）</h3>
+<table>
+<thead>
+<tr>
+<th>装饰器</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>@filter.command(name, alias=..., ...)</code></td>
+<td>注册指令，发送 <code>/name</code> 触发</td>
+</tr>
+<tr>
+<td><code>@filter.command_group(name, ...)</code></td>
+<td>注册指令组，可无限嵌套</td>
+</tr>
+<tr>
+<td><code>@filter.regex(pattern)</code></td>
+<td>正则匹配消息文本</td>
+</tr>
+<tr>
+<td><code>@filter.event_message_type(EventMessageType.X)</code></td>
+<td>按消息类型过滤</td>
+</tr>
+<tr>
+<td><code>@filter.platform_adapter_type(PlatformAdapterType.X)</code></td>
+<td>按平台适配器过滤</td>
+</tr>
+<tr>
+<td><code>@filter.permission_type(PermissionType.X, raise_error=True)</code></td>
+<td>权限过滤</td>
+</tr>
+<tr>
+<td><code>@filter.custom_filter(...)</code></td>
+<td>自定义过滤器</td>
+</tr>
+<tr>
+<td><code>@filter.button_action(action_id=None)</code></td>
+<td>便携按钮交互</td>
+</tr>
+<tr>
+<td><code>@filter.after_message_sent()</code></td>
+<td>消息发送后</td>
+</tr>
+<tr>
+<td><code>@filter.on_decorating_result()</code></td>
+<td>发送消息前（可改结果链）</td>
+</tr>
+</tbody>
+</table>
+<h3>生命周期 / LLM / Agent 类</h3>
+<table>
+<thead>
+<tr>
+<th>装饰器</th>
+<th>触发时机</th>
+<th>回调参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>@filter.on_astrbot_loaded()</code></td>
+<td>AstrBot 加载完成</td>
+<td><code>self</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_platform_loaded()</code></td>
+<td>平台加载完成</td>
+<td><code>self, ...</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_plugin_loaded()</code> / <code>on_plugin_unloaded()</code></td>
+<td>插件加载/卸载</td>
+<td><code>self, ...</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_plugin_error()</code></td>
+<td>插件处理消息异常</td>
+<td><code>self, ...</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_waiting_llm_request()</code></td>
+<td>已确定要调 LLM、排队等锁<strong>之前</strong>（适合发「思考中」）</td>
+<td><code>self, event</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_llm_request()</code></td>
+<td>构造完 LLM 请求、发出之前</td>
+<td><code>self, event, req: ProviderRequest</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_llm_response()</code></td>
+<td>LLM 响应后</td>
+<td><code>self, event, response: LLMResponse</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_agent_begin()</code></td>
+<td>Agent 开始运行</td>
+<td><code>self, event, run_context</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_agent_done()</code></td>
+<td>Agent 运行完成</td>
+<td><code>self, event, run_context, ...</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_using_llm_tool()</code></td>
+<td>调用函数工具前</td>
+<td><code>self, event, tool, tool_args</code></td>
+</tr>
+<tr>
+<td><code>@filter.on_llm_tool_respond()</code></td>
+<td>函数工具返回后</td>
+<td><code>self, event, tool, tool_args, tool_result</code></td>
+</tr>
+<tr>
+<td><code>@filter.llm_tool(name=None)</code></td>
+<td>声明一个可被 LLM 调用的函数工具</td>
+<td>见下</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>事件类型枚举原文（<code>core/star/star_handler.py</code> 的 <code>EventType</code>）共 17 项，含 <code>OnCallingFuncToolEvent</code>、<code>OnAfterMessageSentEvent</code> 等。</p>
+</blockquote>
+<h2>指令</h2>
+<h3>基础</h3>
+<pre><code class="language-python">@filter.command(&quot;hello&quot;)
+async def hello(self, event: AstrMessageEvent):
+    &quot;&quot;&quot;打招呼&quot;&quot;&quot;                 # docstring 会解析成指令帮助
+    yield event.plain_result(&quot;Hello!&quot;)
+</code></pre>
+<ul>
+<li>指令<strong>不能带空格</strong>（空格会被解析成参数）。</li>
+<li>Handler 必须是插件类的异步方法，前两个参数固定 <code>self, event</code>。</li>
+<li>用 <code>yield</code> 返回结果，也可 <code>return</code> 一个 <code>MessageEventResult</code>（或 <code>None</code>）。</li>
+</ul>
+<h3>带参指令（靠类型注解自动解析）</h3>
+<pre><code class="language-python">@filter.command(&quot;echo&quot;)
+async def echo(self, event: AstrMessageEvent, message: str):
+    yield event.plain_result(f&quot;你发了: {message}&quot;)
+
+@filter.command(&quot;add&quot;)
+async def add(self, event: AstrMessageEvent, a: int, b: int):
+    yield event.plain_result(f&quot;结果是: {a + b}&quot;)   # /add 1 2
+</code></pre>
+<h3>别名</h3>
+<pre><code class="language-python">@filter.command(&quot;help&quot;, alias={&quot;帮助&quot;, &quot;helpme&quot;})
+async def help_(self, event: AstrMessageEvent):
+    yield event.plain_result(&quot;帮助信息&quot;)
+</code></pre>
+<h3>指令组（可嵌套）</h3>
+<pre><code class="language-python">@filter.command_group(&quot;math&quot;)
+def math(self):
+    pass                       # 组函数体不需要实现
+
+@math.command(&quot;add&quot;)
+async def add(self, event: AstrMessageEvent, a: int, b: int):
+    yield event.plain_result(str(a + b))           # /math add 1 2
+
+@math.group(&quot;calc&quot;)            # 注意是 .group 不是 .command_group
+def calc(self):
+    pass
+
+@calc.command(&quot;sub&quot;)
+async def sub(self, event: AstrMessageEvent, a: int, b: int):
+    yield event.plain_result(str(a - b))           # /math calc sub 5 3
+</code></pre>
+<p>用户输入不完整的子指令时，AstrBot 会渲染指令树帮助。</p>
+<h2>过滤器枚举值</h2>
+<p><code>EventMessageType</code>（<code>enum.Flag</code>）：</p>
+<pre><code>GROUP_MESSAGE | PRIVATE_MESSAGE | OTHER_MESSAGE | ALL
+</code></pre>
+<p><code>PermissionType</code>（<code>enum.Flag</code>）：</p>
+<pre><code>ADMIN | MEMBER | GROUP_ADMIN | SHARED_GROUP_ADMIN
+</code></pre>
+<p><code>PlatformAdapterType</code>（4.29.4 全量）：</p>
+<pre><code>AIOCQHTTP, QQOFFICIAL, QQOFFICIAL_WEBHOOK, TELEGRAM, WECOM, WECOM_AI_BOT,
+LARK, DINGTALK, DISCORD, SLACK, KOOK, VOCECHAT, WEIXIN_OFFICIAL_ACCOUNT,
+WEIXIN_OC, SATORI, MISSKEY, LINE, MATRIX, MATTERMOST, WEBCHAT, ALL
+</code></pre>
+<pre><code class="language-python">@filter.permission_type(filter.PermissionType.ADMIN)
+@filter.command(&quot;reload&quot;)
+async def reload(self, event: AstrMessageEvent):
+    ...
+
+@filter.platform_adapter_type(
+    filter.PlatformAdapterType.AIOCQHTTP | filter.PlatformAdapterType.QQOFFICIAL
+)
+async def on_qq(self, event: AstrMessageEvent):
+    ...
+</code></pre>
+<p><code>permission_type</code> 的 <code>raise_error=True</code>（默认）表示无权限时抛错并<strong>停止事件传播</strong>。</p>
+<h2>priority</h2>
+<p>所有注册函数都收 <code>**kwargs</code>，其中 <code>priority</code> 存进 <code>StarHandlerMetadata.extras_configs</code>，<strong>默认 0</strong>。</p>
+<p>源码 <code>core/star/star_handler.py</code> 的 <code>StarHandlerRegistry.append()</code>：</p>
+<pre><code class="language-python">self._handlers.append(handler)
+self._handlers.sort(key=lambda h: -h.extras_configs[&quot;priority&quot;])
+</code></pre>
+<p>即<strong>数值越大越先执行</strong>（降序）。消息管线按注册表的这个顺序依次调用 handler。内置插件正是用 <code>priority=sys.maxsize - 1</code> 让「只有一个 @ / 唤醒前缀」的兜底监听器<strong>抢在其它 handler 之前</strong>先跑。</p>
+<pre><code class="language-python">@filter.event_message_type(filter.EventMessageType.ALL, priority=10)
+async def early_check(self, event: AstrMessageEvent):
+    &quot;&quot;&quot;priority 越大越早执行；配合 event.stop_event() 可截断后续 handler&quot;&quot;&quot;
+    ...
+</code></pre>
+<blockquote>
+<p><code>Context.register_commands()</code> 里另有 <code>priority: int</code> 参数（文档写「1-10」），但该方法本身已标注 <code>@deprecated</code>，新代码请用 <code>@filter.command</code> 装饰器。</p>
+</blockquote>
+<h2>AstrMessageEvent 常用方法</h2>
+<p>源码 <code>core/platform/astr_message_event.py</code>：</p>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>方法 / 属性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>消息内容</td>
+<td><code>message_str</code>、<code>get_message_str()</code>、<code>get_messages()</code>、<code>get_message_outline()</code>、<code>message_obj</code>（含 <code>.message</code> 消息链、<code>.raw_message</code> 原始对象）</td>
+</tr>
+<tr>
+<td>身份</td>
+<td><code>get_sender_id()</code>、<code>get_sender_name()</code>、<code>get_self_id()</code>、<code>get_group_id()</code>、<code>get_session_id()</code>、<code>is_admin()</code>、<code>is_private_chat()</code></td>
+</tr>
+<tr>
+<td>平台</td>
+<td><code>get_platform_name()</code>、<code>get_platform_id()</code>、<code>get_message_type()</code>、<code>unified_msg_origin</code>、<code>session_id</code></td>
+</tr>
+<tr>
+<td>结果</td>
+<td><code>plain_result()</code>、<code>image_result()</code>、<code>chain_result()</code>、<code>make_result()</code>、<code>set_result()</code>、<code>get_result()</code>、<code>clear_result()</code></td>
+</tr>
+<tr>
+<td>流程控制</td>
+<td><code>stop_event()</code>、<code>continue_event()</code>、<code>is_stopped()</code>、<code>should_call_llm(bool)</code></td>
+</tr>
+<tr>
+<td>发送</td>
+<td><code>await send(message_chain)</code>、<code>await send_streaming(...)</code>、<code>await send_typing()</code> / <code>stop_typing()</code>、<code>await react(emoji)</code></td>
+</tr>
+<tr>
+<td>LLM</td>
+<td><code>request_llm(prompt, ...)</code>、<code>await get_group(...)</code></td>
+</tr>
+<tr>
+<td>临时数据</td>
+<td><code>set_extra(key, value)</code> / <code>get_extra(key, default)</code> / <code>clear_extra()</code></td>
+</tr>
+<tr>
+<td>临时文件</td>
+<td><code>track_temporary_local_file(path)</code> / <code>untrack_temporary_local_file()</code> / <code>cleanup_temporary_local_files()</code></td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-python">@filter.event_message_type(filter.EventMessageType.ALL)
+async def debug(self, event: AstrMessageEvent):
+    self.logger.debug(&quot;raw=%s&quot;, event.message_obj.raw_message)
+    self.logger.debug(&quot;chain=%s&quot;, event.get_messages())
+</code></pre>
+<h2><code>event.stop_event()</code></h2>
+<p>阻止事件继续向后续 handler / LLM 传播。指令处理完通常<strong>不需要</strong>调用，直接 <code>yield</code> 结果即可；只在明确要截断事件时用。</p>
+<pre><code class="language-python">@filter.command(&quot;block&quot;)
+async def block(self, event: AstrMessageEvent):
+    event.stop_event()
+    yield event.plain_result(&quot;已拦截该消息&quot;)
+</code></pre>
+<h2>注册检查（调试技巧）</h2>
+<p>导入插件模块后，可以从全局注册表确认装饰器是否生效：</p>
+<pre><code class="language-python">from astrbot.core.star.register.star_handler import star_handlers_registry
+hits = [h for h in star_handlers_registry.star_handlers_map.values()
+        if &quot;你的模块名&quot; in str(getattr(h, &quot;handler_module_path&quot;, &quot;&quot;))]
+print(len(hits), [h.event_type for h in hits])
+</code></pre>
+<blockquote>
+<p>要在<strong>导入模块之后</strong>再查询，否则返回 0 只是时机问题。</p>
+</blockquote></section><section id="sec5"><h1>05 消息组件与结果</h1>
+<h2>导入</h2>
+<pre><code class="language-python">from astrbot.api.message_components import Plain, Image, At, Reply, Node, Face, Record, Video
+# 或
+import astrbot.api.message_components as Comp
+</code></pre>
+<p><code>astrbot.api.message_components</code> 直接 <code>from astrbot.core.message.components import *</code>，是公开稳定 API。</p>
+<h2>组件清单（4.29.4 全量）</h2>
+<p>源码 <code>core/message/components.py</code> 的 <code>class</code> 列表：</p>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>说明</th>
+<th>关键字段 / 构造</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Plain</code></td>
+<td>文本</td>
+<td><code>Plain("文字")</code> / <code>Plain(text="文字")</code></td>
+</tr>
+<tr>
+<td><code>Image</code></td>
+<td>图片</td>
+<td><code>Image(file=...)</code>；另有 <code>fromURL</code> / <code>fromFileSystem</code> / <code>fromBase64</code> / <code>fromBytes</code> 静态方法</td>
+</tr>
+<tr>
+<td><code>At</code></td>
+<td>@某人</td>
+<td><code>At(qq=123456)</code>；<code>AtAll</code> 是 <code>qq="all"</code> 的子类</td>
+</tr>
+<tr>
+<td><code>Face</code></td>
+<td>QQ 表情</td>
+<td><code>Face(id=...)</code></td>
+</tr>
+<tr>
+<td><code>Record</code></td>
+<td>语音</td>
+<td><code>Record(file=...)</code></td>
+</tr>
+<tr>
+<td><code>Video</code></td>
+<td>视频</td>
+<td><code>Video(file=...)</code></td>
+</tr>
+<tr>
+<td><code>Reply</code></td>
+<td>引用回复</td>
+<td><code>Reply(id=..., chain=[...])</code>，<code>chain</code> 是被引用的消息段列表</td>
+</tr>
+<tr>
+<td><code>Poke</code></td>
+<td>戳一戳</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Forward</code> / <code>Node</code> / <code>Nodes</code></td>
+<td>合并转发</td>
+<td><code>Node(...)</code> 列表</td>
+</tr>
+<tr>
+<td><code>Share</code> / <code>Contact</code> / <code>Location</code> / <code>Music</code> / <code>Json</code> / <code>File</code></td>
+<td>各类平台段</td>
+<td></td>
+</tr>
+<tr>
+<td><code>RPS</code> / <code>Dice</code> / <code>Shake</code></td>
+<td>小游戏（源码标 TODO）</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Button</code> / <code>ActionRow</code> / <code>ButtonInteraction</code></td>
+<td>便携按钮</td>
+<td>配合 <code>@filter.button_action</code></td>
+</tr>
+<tr>
+<td><code>Unknown</code></td>
+<td>未知段</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3>Image 的四种构造</h3>
+<pre><code class="language-python">Image(file=&quot;https://example.com/a.png&quot;)          # 注意：file 是必填位置参数
+Image.fromURL(&quot;https://example.com/a.png&quot;)       # 仅接受 http(s)
+Image.fromFileSystem(&quot;/abs/path/a.png&quot;)          # 转成 file:// URI，同时设 path
+Image.fromBase64(&quot;iVBORw0KGgo...&quot;)               # 转成 base64://
+Image.fromBytes(b&quot;...&quot;)                          # 字节 → base64
+</code></pre>
+<p><code>Image</code> 属性：<code>file</code>、<code>url</code>、<code>path</code>、<code>_type</code>。⚠️ <code>__init__</code> 签名是 <code>__init__(self, file: str | None, **_)</code> —— <strong><code>file</code> 必填</strong>，不能写 <code>Image(url=...)</code>；要给 url 就构造后赋值：</p>
+<pre><code class="language-python">img = Image(file=&quot;&quot;)
+img.url = &quot;https://example.com/a.png&quot;
+</code></pre>
+<h3>Reply.chain（4.29.4 图片修复关键）</h3>
+<pre><code class="language-python">for comp in event.get_messages():
+    if isinstance(comp, Reply) and comp.chain:
+        for seg in comp.chain:          # 引用消息里的原始段
+            if isinstance(seg, Image):
+                ...
+</code></pre>
+<p>引用消息里的图片<strong>不会出现在顶层消息链</strong>，遍历 <code>Reply.chain</code> 才能拿到。这是很多图片类插件漏处理的场景。</p>
+<h2>消息链 MessageChain</h2>
+<p><code>MessageChain</code>（<code>core/message/message_event_result.py</code>）是一个 dataclass，核心字段 <code>chain: list[BaseMessageComponent]</code>。链式方法：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.message(str)</code></td>
+<td>追加 Plain</td>
+</tr>
+<tr>
+<td><code>.at(name, qq)</code> / <code>.at_all()</code></td>
+<td>追加 At</td>
+</tr>
+<tr>
+<td><code>.error(str)</code></td>
+<td>追加错误文本</td>
+</tr>
+<tr>
+<td><code>.url_image(url)</code> / <code>.file_image(path)</code> / <code>.base64_image(b64)</code></td>
+<td>追加图片</td>
+</tr>
+<tr>
+<td><code>.use_t2i(bool)</code> / <code>.use_markdown(bool)</code></td>
+<td>渲染开关（<code>None</code> = 跟随用户设置）</td>
+</tr>
+<tr>
+<td><code>.get_plain_text(with_other_comps_mark=False)</code></td>
+<td>提取纯文本</td>
+</tr>
+<tr>
+<td><code>.squash_plain()</code></td>
+<td>合并相邻 Plain</td>
+</tr>
+<tr>
+<td><code>.derive(chain=None)</code></td>
+<td>复制元数据生成新链</td>
+</tr>
+</tbody>
+</table>
+<h2>返回结果：三种写法</h2>
+<pre><code class="language-python"># 1) 纯文本（最常用）
+yield event.plain_result(&quot;你好&quot;)
+
+# 2) 单张图片（http 开头走 url_image，否则当本地路径）
+yield event.image_result(&quot;/abs/path/a.png&quot;)
+
+# 3) 自定义消息链
+from astrbot.api.message_components import Plain, At, Image
+yield event.chain_result([
+    At(qq=event.get_sender_id()),
+    Plain(&quot; 这是你的图：&quot;),
+    Image.fromFileSystem(&quot;/abs/path/a.png&quot;),
+])
+</code></pre>
+<p>也可以用 <code>MessageEventResult</code> 的链式 API：</p>
+<pre><code class="language-python">from astrbot.api.event import MessageEventResult
+yield MessageEventResult().message(&quot;第一行&quot;).at(&quot;某人&quot;, 123456)
+</code></pre>
+<p><code>MessageEventResult</code> 继承 <code>MessageChain</code>，额外有：</p>
+<ul>
+<li><code>stop_event()</code> / <code>continue_event()</code> / <code>is_stopped()</code></li>
+<li><code>set_async_stream(gen)</code> 流式输出</li>
+<li><code>set_result_content_type(typ)</code>、<code>is_llm_result()</code>、<code>is_model_result()</code></li>
+</ul>
+<p><code>event.set_result(...)</code> 可直接设置结果（接受 <code>MessageEventResult | str</code>）。</p>
+<h2>主动发送消息</h2>
+<pre><code class="language-python"># 在当前会话立即发一条（不经过结果管线）
+await event.send(MessageChain().message(&quot;处理中...&quot;))
+
+# 按会话来源主动发（可用于定时任务）
+from astrbot.api.event import MessageChain
+ok = await self.context.send_message(
+    event.unified_msg_origin,
+    MessageChain().message(&quot;定时提醒&quot;),
+)
+</code></pre>
+<p><code>send_message</code> 返回 <code>bool</code>；参数是 <code>MessageChain</code>（不是列表）。官方注释提示：QQ 官方 API 平台（<code>qq_official</code>）不支持主动消息。</p>
+<h2>平台适配矩阵（发送消息能力）</h2>
+<table>
+<thead>
+<tr>
+<th>平台</th>
+<th>At</th>
+<th>Plain</th>
+<th>Image</th>
+<th>Record</th>
+<th>Video</th>
+<th>Reply</th>
+<th>主动消息</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>QQ 个人号 (aiocqhttp)</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Telegram</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>QQ 官方接口</td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>飞书</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>企业微信</td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>钉钉</td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+</tbody>
+</table>
+<p>补充：</p>
+<ul>
+<li>aiocqhttp 还支持 <code>Poke</code>、<code>Node(s)</code> 合并转发。</li>
+<li>QQ 官方接口、钉钉发送时平台强制带 <code>At</code>。</li>
+<li>钉钉图片仅支持 http 链接。</li>
+<li>aiocqhttp 对 <code>Plain</code> 会自动 <code>strip()</code> 空格换行，需要保留可用零宽空格 <code>\u200b</code>。</li>
+</ul>
+<h2>让 LLM 参与（request_llm）</h2>
+<pre><code class="language-python">yield event.request_llm(
+    prompt=&quot;请总结这张图&quot;,
+    system_prompt=&quot;你是一个图像分析助手&quot;,
+    image_urls=[&quot;/abs/path/a.png&quot;],     # 支持 http / base64:// / 本地路径
+)
+</code></pre>
+<p><code>request_llm</code> 返回一个 <code>ProviderRequest</code>，<code>yield</code> 它即把请求交回管线。参数含 <code>prompt</code>、<code>system_prompt</code>、<code>image_urls</code>、<code>audio_urls</code>、<code>contexts</code>、<code>conversation</code>、<code>tool_set</code> 等（<code>session_id</code> 已过时，留空）。</p>
+<h2>常见错误</h2>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TypeError: Image.__init__() missing ... 'file'</code></td>
+<td><code>Image</code> 的 <code>file</code> 是必填位置参数</td>
+</tr>
+<tr>
+<td>图片发不出去</td>
+<td>路径不是绝对路径 / 跨容器不可读；优先用 <code>Image.fromBase64</code> 或 <code>data:</code> URI</td>
+</tr>
+<tr>
+<td>引用消息里的图片没被处理</td>
+<td>只遍历了顶层 <code>get_messages()</code>，漏了 <code>Reply.chain</code></td>
+</tr>
+<tr>
+<td><code>plain_result</code> 里文本首尾空格被吞</td>
+<td>aiocqhttp 的 <code>strip()</code> 行为，用 <code>\u200b</code> 规避</td>
+</tr>
+</tbody>
+</table></section><section id="sec6"><h1>06 LLM 钩子与 4.29.4 图片管线</h1>
+<p>这一章是 <strong>4.29.4 变化最大、也最容易踩坑</strong>的部分。所有时序结论来自 <code>core/pipeline/preprocess_stage/stage.py</code>、<code>core/astr_main_agent.py</code>、<code>core/pipeline/process_stage/method/agent_sub_stages/internal.py</code> 的实际代码。</p>
+<h2>管线顺序（4.29.4）</h2>
+<pre><code>适配器收到消息
+   ↓
+① PreProcessStage（预处理）
+   - 遍历消息链里的 Image，尝试把 url 下载/转成本地路径
+   - 下载失败时判定「可恢复错误」→ 跳过该图，继续处理
+   ↓
+② 命令 handler / 指令处理
+   ↓
+③ collect_initial_request()（构造 ProviderRequest）
+   - 成功的图片 → req.image_urls（url 已被改写成本地路径）
+   - 失败的图片 → 往请求里塞一个 TextPart(&quot;[Image unavailable]&quot;)
+   ↓
+④ on_llm_request 钩子  ★ 插件能介入的位置
+   ↓
+⑤ prepare_request_images()
+   - 用 MediaResolver / prepare_model_image 逐项标准化 req.image_urls
+   - 支持本地路径、file:// URI、data: base64 URI
+   ↓
+⑥ 调用 LLM
+   ↓
+on_llm_response → on_decorating_result → 发送
+</code></pre>
+<p><strong>关键结论 1</strong>：AstrBot <strong>没有「预处理之前」的插件钩子</strong>。预处理永远先于插件，因此 <code>gchat.qpic.cn 400</code> 这类 WARNING 无法被任何插件消除（它无害，可忽略）。</p>
+<p><strong>关键结论 2</strong>：<code>on_llm_request</code> 在 ③ 之后、⑤ 之前。插件此时能同时看到「原始消息段（仍带 file_id）」和「已构造好的 req」，是修复图片、改系统提示的唯一正确位置。</p>
+<h2>ProviderRequest 字段</h2>
+<p><code>astrbot.api.provider.ProviderRequest</code>（源码 <code>core/provider/entities.py:194</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prompt</code></td>
+<td>str | None</td>
+<td>用户提示</td>
+</tr>
+<tr>
+<td><code>system_prompt</code></td>
+<td>str</td>
+<td>系统提示（可直接拼接修改）</td>
+</tr>
+<tr>
+<td><code>image_urls</code></td>
+<td>list[str]</td>
+<td>图片引用：http / 本地路径 / <code>data:</code> URI / <code>base64://</code></td>
+</tr>
+<tr>
+<td><code>audio_urls</code></td>
+<td>list[str]</td>
+<td>音频</td>
+</tr>
+<tr>
+<td><code>extra_user_content_parts</code></td>
+<td>list[ContentPart]</td>
+<td>额外内容段，<strong><code>[Image unavailable]</code> 占位就在这里</strong></td>
+</tr>
+<tr>
+<td><code>contexts</code></td>
+<td>list[dict]</td>
+<td>对话上下文</td>
+</tr>
+<tr>
+<td><code>conversation</code></td>
+<td>Conversation | None</td>
+<td>会话对象</td>
+</tr>
+<tr>
+<td><code>func_tool</code></td>
+<td>ToolSet | None</td>
+<td>函数工具集</td>
+</tr>
+<tr>
+<td><code>tool_calls_result</code></td>
+<td>...</td>
+<td>工具调用结果</td>
+</tr>
+<tr>
+<td><code>session_id</code></td>
+<td>str</td>
+<td>会话 ID</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>str | None</td>
+<td>指定模型</td>
+</tr>
+</tbody>
+</table>
+<h2>on_llm_request 标准写法</h2>
+<pre><code class="language-python">from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.provider import ProviderRequest
+from astrbot.api.star import Context, Star
+
+
+class PromptPlugin(Star):
+    def __init__(self, context: Context, config=None):
+        super().__init__(context)
+        self.config = config or {}
+
+    @filter.on_llm_request()
+    async def on_req(self, event: AstrMessageEvent, req: ProviderRequest):
+        # 1) 改系统提示
+        if &quot;猫娘&quot; not in req.system_prompt:
+            req.system_prompt += &quot;\n请用可爱的语气回答。&quot;
+
+        # 2) 追加图片（本地路径或 data URI 都可被下游标准化）
+        # req.image_urls.append(&quot;/abs/path/a.png&quot;)
+</code></pre>
+<blockquote>
+<p>回调<strong>必须接收两个参数</strong> <code>event, req</code>（注册函数 docstring 明确要求）。返回 <code>None</code> 即可，不需要 yield。</p>
+</blockquote>
+<h2>其他 LLM / Agent 钩子</h2>
+<pre><code class="language-python">@filter.on_llm_response()
+async def on_resp(self, event: AstrMessageEvent, response):
+    &quot;&quot;&quot;LLM 响应后；response 是 LLMResponse&quot;&quot;&quot;
+    ...
+
+@filter.on_decorating_result()
+async def decorate(self, event: AstrMessageEvent):
+    &quot;&quot;&quot;发送前，可改 event.get_result().chain&quot;&quot;&quot;
+    ...
+
+@filter.on_waiting_llm_request()
+async def waiting(self, event: AstrMessageEvent):
+    &quot;&quot;&quot;已确定要调 LLM、排队等锁之前（适合发『思考中』）&quot;&quot;&quot;
+    await event.send(MessageChain().message(&quot;🤔 正在思考中...&quot;))
+
+@filter.on_agent_begin()
+async def agent_begin(self, event, run_context):
+    ...
+
+@filter.on_agent_done()
+async def agent_done(self, event, run_context, ...):
+    ...
+</code></pre>
+<p><code>LLMResponse</code> 可从 <code>astrbot.api.provider</code> 导入，含 <code>role</code>、<code>completion_text</code>、<code>result_chain</code>、<code>tools_call_name</code>、<code>reasoning_content</code>、<code>raw_completion</code> 等字段。</p>
+<h2>4.29.4 图片管线细节（写给要修图片的人）</h2>
+<h3>① 预处理阶段的失败判定</h3>
+<p><code>is_recoverable_image_error()</code>（<code>core/utils/media_utils.py</code>）把 <code>DownloadFileHTTPError</code>（HTTP 400/403/404 等）判为<strong>可恢复错误</strong>：不中断消息处理，只跳过该图片。因此 QQ 图片因 rkey 失效返回 400 时，插件仍有机会介入。</p>
+<h3>② <code>[Image unavailable]</code> 占位文本</h3>
+<p><code>collect_initial_request()</code>（<code>core/astr_main_agent.py</code> 约 1540–1630 行）对下载失败的图片插入：</p>
+<pre><code class="language-python">TextPart(text=&quot;[Image unavailable]&quot;)
+</code></pre>
+<p>到 <code>req.extra_user_content_parts</code>。<strong>插件补回图片后必须等量清除这句</strong>，否则 LLM 会同时收到「图不可用」和实际图片，自相矛盾。</p>
+<h3>③ 图片标准化</h3>
+<p><code>prepare_request_images()</code> → <code>prepare_model_image(ref, max_size, output_dir)</code>：</p>
+<ul>
+<li>内部用 <code>MediaResolver</code>（<code>core/utils/media_utils.py</code>）解析引用；</li>
+<li>支持本地路径、<code>file://</code> URI、<code>data:image/png;base64,...</code>；</li>
+<li><code>describe_media_ref()</code> 生成给 LLM 的描述，<strong>不会把 base64 payload 泄漏进提示文本</strong>；</li>
+<li><code>max_size</code> 必须 &gt; 0（如 1568），传 0 会返回 None。</li>
+</ul>
+<blockquote>
+<p>模块路径变化：旧版 <code>astrbot.core.utils.media_resolver</code> → 4.29.4 为 <strong><code>astrbot.core.utils.media_utils</code></strong>（类仍叫 <code>MediaResolver</code>，方法 <code>as_path()</code> / <code>to_base64_data()</code> / <code>to_data_url()</code> / <code>to_path()</code> / <code>to_bytes()</code>）。引用该内部模块的旧插件需要改名。</p>
+</blockquote>
+<h3>④ 官方自带的取图兜底可作为参考</h3>
+<p>4.29.4 内置 <code>core/utils/quoted_message/image_resolver.py</code>，用 <code>get_image</code> 的 <code>file / file_id / id / image</code> 四种参数名 + <code>get_file</code> 兜底解析<strong>引用消息</strong>图片。写图片修复插件时应照抄这个兜底顺序，只试一种参数名命中率很低。</p>
+<h2>完整案例：图片本地化修复插件骨架</h2>
+<p>针对「QQ/NapCat 因 rkey 失效导致 <code>gchat.qpic.cn</code> 图片 400、机器人看不到图」的场景，插件思路是：用 OneBot <code>get_image</code> 取协议端<strong>本地缓存</strong>，绕开腾讯 CDN 与 rkey。</p>
+<pre><code class="language-python">import base64
+from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.message_components import Image, Reply
+from astrbot.api.provider import ProviderRequest
+from astrbot.api.star import Context, Star
+from astrbot.api import logger
+
+UNAVAILABLE = &quot;[Image unavailable]&quot;
+
+
+class ImageFixPlugin(Star):
+    def __init__(self, context: Context, config=None):
+        super().__init__(context)
+        self.config = config or {}
+
+    @filter.on_llm_request()
+    async def fix(self, event: AstrMessageEvent, req: ProviderRequest):
+        # 1) 收集预处理失败的图片 file_id（顶层 + 引用链）
+        ids = []
+        for comp in event.message_obj.message or []:
+            if isinstance(comp, Reply) and comp.chain:
+                items = comp.chain
+            else:
+                items = [comp]
+            for seg in items:
+                if isinstance(seg, Image) and seg.file:
+                    ids.append(seg.file)
+
+        # 2) 逐个用 get_image 多参数名兜底取本地缓存
+        added = 0
+        for fid in dict.fromkeys(ids):
+            data = await self._fetch(event, fid)
+            if not data:
+                continue
+            uri = &quot;data:image/jpeg;base64,&quot; + base64.b64encode(data).decode()
+            if uri not in req.image_urls:
+                req.image_urls.append(uri)
+                added += 1
+
+        # 3) 等量清除占位文本
+        if added:
+            parts = req.extra_user_content_parts
+            removed = 0
+            keep = []
+            for p in parts:
+                txt = getattr(p, &quot;text&quot;, None)
+                if removed &lt; added and txt and txt.strip() == UNAVAILABLE:
+                    removed += 1
+                    continue
+                keep.append(p)
+            req.extra_user_content_parts = keep
+            logger.info(&quot;[imagefix] 补图 %d 张，清除占位 %d 条&quot;, added, removed)
+
+    async def _fetch(self, event, fid):
+        bot = getattr(event, &quot;bot&quot;, None)
+        if bot is None:
+            return None
+        for action in (&quot;get_image&quot;, &quot;get_file&quot;):
+            for key in (&quot;file&quot;, &quot;file_id&quot;, &quot;id&quot;, &quot;image&quot;):
+                try:
+                    ret = await bot.api.call_action(action, **{key: fid})
+                    # 返回可能是路径 / base64 / dict，需归一化后读取字节
+                    ...
+                except Exception:
+                    continue
+        return None
+</code></pre>
+<p>要点与局限：</p>
+<ul>
+<li><strong>不要改写消息组件本身</strong>（改 <code>Image.url</code> 无效，预处理已跑完），只需写 <code>req.image_urls</code>。</li>
+<li>图片已成功时 url 会被改写成本地路径，插件应跳过，避免重复。</li>
+<li><code>data:</code> URI 与本地路径都能被 ⑤ 的 <code>MediaResolver</code> 消费，不会二次下载。</li>
+<li>该插件<strong>治标</strong>：预处理 400 警告与群文件 <code>retcode=1400 packetBackend 不可用</code> 属于另一条链路，插件消除不了；彻底解决要对齐 QQ 版本与协议端支持的版本映射，或换协议端。</li>
+</ul>
+<blockquote>
+<p>本仓库的实现参考：<a href="https://github.com/FrostsAfterglow/astrbot_plugin_qpicfix"><code>astrbot_plugin_qpicfix</code></a>（v1.1.1，已在 4.29.4 做过 8 项集成测试）。</p>
+</blockquote></section><section id="sec7"><h1>07 平台 API 与工具</h1>
+<h2>调用 OneBot / 协议端原生 API</h2>
+<p>在 <code>aiocqhttp</code>（QQ 个人号，NapCat / LLOneBot 等）适配器下，<code>AstrMessageEvent</code> 的实际类型是 <code>AiocqhttpMessageEvent</code>，带 <code>bot</code> 属性，类型是 <code>aiocqhttp.CQHttp</code>。</p>
+<p>源码 <code>core/platform/sources/aiocqhttp/aiocqhttp_message_event.py</code> 里官方自己的用法：</p>
+<pre><code class="language-python">info = await self.bot.call_action(&quot;get_group_member_info&quot;, ...)
+</code></pre>
+<h3>两条等价路径（4.29.4 都可用）</h3>
+<pre><code class="language-python"># 路径 A：CQHttp 自身的方法（推荐，官方内置代码就用这个）
+ret = await event.bot.call_action(&quot;get_image&quot;, file=file_id)
+
+# 路径 B：UnifiedApi 代理（CQHttp.api 是 property，返回 UnifiedApi 实例）
+ret = await event.bot.api.call_action(&quot;get_image&quot;, file=file_id)
+</code></pre>
+<p>实测 <code>CQHttp</code> 有 <code>call_action(self, action: str, **params) -&gt; Any</code>，且 <code>.api</code> 是 <code>UnifiedApi</code>、同样有 <code>call_action</code>。两者都能用，现有插件里两种写法都出现过。</p>
+<h3>安全写法（跨适配器）</h3>
+<p><code>bot</code> 不是所有平台都有，跨适配器插件要做防御：</p>
+<pre><code class="language-python">bot = getattr(event, &quot;bot&quot;, None)
+if bot is None or event.get_platform_name() != &quot;aiocqhttp&quot;:
+    return
+try:
+    ret = await bot.call_action(&quot;get_image&quot;, file=file_id)
+except Exception as e:
+    self.logger.warning(&quot;[xxx] call_action 失败: %s&quot;, e)
+</code></pre>
+<h3>常用 action</h3>
+<table>
+<thead>
+<tr>
+<th>action</th>
+<th>用途</th>
+<th>关键参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_image</code></td>
+<td>按 file_id 取图片本地缓存（绕开 rkey）</td>
+<td><code>file</code> / <code>file_id</code> / <code>id</code> / <code>image</code> 因协议端而异</td>
+</tr>
+<tr>
+<td><code>get_file</code></td>
+<td>取文件</td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>get_version_info</code></td>
+<td>查协议端版本</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>get_group_member_info</code></td>
+<td>群成员资料</td>
+<td><code>group_id</code>, <code>user_id</code></td>
+</tr>
+<tr>
+<td><code>send_group_msg</code> / <code>send_private_msg</code></td>
+<td>直接发消息</td>
+<td><code>group_id</code> / <code>user_id</code>, <code>message</code></td>
+</tr>
+<tr>
+<td><code>send_group_forward_msg</code></td>
+<td>合并转发</td>
+<td><code>messages</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>参数名兜底很重要</strong>：不同协议端对 <code>get_image</code> 的参数名要求不同。4.29.4 官方 <code>core/utils/quoted_message/image_resolver.py</code> 用 <code>file / file_id / id / image</code> 四种依次尝试，并配 <code>get_file</code> 兜底。只试一种命中率会明显偏低。</p>
+</blockquote>
+<p>返回值形态也不统一，可能是：</p>
+<ul>
+<li>本地文件路径字符串 / <code>file://</code> URI</li>
+<li>base64 字符串或 <code>base64://...</code> / <code>data:</code> URI</li>
+<li>dict（含 <code>file</code>、<code>url</code>、<code>base64</code>、<code>data</code> 等键）</li>
+</ul>
+<p>建议写归一化函数统一成字节，再按需转 <code>data:</code> URI 或本地路径。</p>
+<h2>函数工具（llm_tool）</h2>
+<p>让 LLM 在对话中主动调用你的函数：</p>
+<pre><code class="language-python">from astrbot.api.event import AstrMessageEvent, filter
+
+
+class ToolPlugin(Star):
+    @filter.llm_tool(name=&quot;get_weather&quot;)   # 不填 name 则用函数名
+    async def get_weather(self, event: AstrMessageEvent, location: str):
+        '''获取指定地点的天气信息。
+
+        Args:
+            location(string): 地点名称
+        '''
+        return f&quot;{location} 今天晴&quot;
+</code></pre>
+<p>源码 <code>register_llm_tool</code> 的 docstring 明确要求：</p>
+<ul>
+<li><strong>docstring 必须按上面格式写</strong>（AstrBot 会解析它生成工具 schema）；</li>
+<li>第一个参数是 <code>event</code>；</li>
+<li>可接受的参数类型：<code>string, number, object, array, boolean</code>（注意这是函数工具的参数类型，与配置 schema 的 <code>type</code> 白名单是两套东西，<strong>别混淆</strong>）。</li>
+</ul>
+<p>相关钩子：<code>@filter.on_using_llm_tool()</code>（调用前，收 <code>tool, tool_args</code>）、<code>@filter.on_llm_tool_respond()</code>（返回后，收 <code>tool, tool_args, tool_result</code>）。</p>
+<p>也可以用 <code>self.context.add_llm_tools(*tools)</code> / <code>StarTools.register_llm_tool(...)</code> 动态注册。</p>
+<h2>自定义过滤器</h2>
+<pre><code class="language-python">from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.core.star.filter.custom_filter import CustomFilter
+
+
+class OnlyMyGroup(CustomFilter):
+    def filter(self, event: AstrMessageEvent, cfg) -&gt; bool:
+        return event.get_group_id() == &quot;123456&quot;
+
+
+@filter.custom_filter(OnlyMyGroup())
+@filter.command(&quot;secret&quot;)
+async def secret(self, event: AstrMessageEvent):
+    yield event.plain_result(&quot;仅特定群可见&quot;)
+</code></pre>
+<h2>插件提供 Skills</h2>
+<p>4.29.4 支持插件随附 Skill，加载后自动纳入 Skill Manager（WebUI「插件 → 技能」里只读展示）：</p>
+<pre><code>your_plugin/
+├── metadata.yaml
+├── main.py
+└── skills/
+    ├── report-writer/
+    │   └── SKILL.md
+    └── web-search-helper/
+        └── SKILL.md
+</code></pre>
+<p>也可以让 <code>skills/</code> 本身就是一个 Skill（直接放 <code>skills/SKILL.md</code>），此时 Skill 名取插件目录名。</p>
+<h2>注册自定义 Web API</h2>
+<pre><code class="language-python">self.context.register_web_api(
+    route=&quot;/api/myplugin/status&quot;,
+    ...   # 参考 Context.register_web_api 签名
+)
+</code></pre>
+<h2>Context 方法完整分组（<code>core/star/context.py</code>）</h2>
+<table>
+<thead>
+<tr>
+<th>分组</th>
+<th>方法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>配置</td>
+<td><code>get_config(umo=None)</code>、<code>get_current_chat_provider_id(umo)</code></td>
+</tr>
+<tr>
+<td>LLM</td>
+<td><code>llm_generate(...)</code>、<code>tool_loop_agent(...)</code>、<code>get_using_provider(_async)</code>、<code>get_all_providers()</code>、<code>get_all_tts_providers()</code>、<code>get_all_stt_providers()</code>、<code>get_all_embedding_providers()</code>、<code>get_provider_by_id(...)</code></td>
+</tr>
+<tr>
+<td>插件</td>
+<td><code>get_registered_star(name)</code>、<code>get_all_stars()</code>、<code>get_llm_tool_manager()</code>、<code>activate_llm_tool(_async)</code>、<code>deactivate_llm_tool(_async)</code></td>
+</tr>
+<tr>
+<td>平台</td>
+<td><code>get_platform(type)</code>、<code>get_platform_inst(id)</code></td>
+</tr>
+<tr>
+<td>消息</td>
+<td><code>send_message(session, message_chain)</code></td>
+</tr>
+<tr>
+<td>注册</td>
+<td><code>add_llm_tools(*tools)</code>、<code>register_llm_tool(...)</code>、<code>unregister_llm_tool(name)</code>、<code>register_commands(...)</code>(已废弃)、<code>register_task(awaitable, desc)</code>、<code>register_web_api(...)</code>、<code>register_provider(...)</code></td>
+</tr>
+<tr>
+<td>其他</td>
+<td><code>get_event_queue()</code>、<code>get_db()</code></td>
+</tr>
+</tbody>
+</table>
+<h2>开发原则（官方要求，写插件时遵守）</h2>
+<ol>
+<li>功能需经过测试；包含良好注释。</li>
+<li>持久化数据放 <code>data/</code> 下，不放插件目录。</li>
+<li>良好错误处理，不要让单个错误导致插件崩溃。</li>
+<li>提交前用 <code>ruff</code> 格式化。</li>
+<li><strong>不要用同步的 <code>requests</code></strong>，用 <code>aiohttp</code> / <code>httpx</code> 等异步库。</li>
+<li>给现有插件扩功能优先提 PR，不要另起一个插件（原作者停维护除外）。</li>
+<li>借鉴/移植他人代码或设计，需在 README 说明灵感来源并附链接，遵守原许可证。</li>
+</ol></section><section id="sec8"><h1>08 发布、安装与排错</h1>
+<h2>三种安装方式（4.29.4）</h2>
+<h3>方式一：插件市场</h3>
+<p>WebUI → 插件 → 插件市场 → 搜索安装。<strong>仅已上架市场的插件可用</strong>；刚建的个人仓库不会出现在市场里。</p>
+<h3>方式二：从 GitHub 仓库地址安装</h3>
+<p>在插件页填仓库地址。地址栏只填标准地址：</p>
+<pre><code>https://github.com/YourName/astrbot_plugin_xxx
+</code></pre>
+<p>安装器内部流程（源码 <code>core/star/updater.py</code> 的 <code>inspect_repository</code>）：</p>
+<ol>
+<li><code>normalize_repository_url()</code> 归一化；</li>
+<li><code>parse_repository_url()</code> 判定 transport：
+   - host 是 <code>github.com</code> / <code>www.github.com</code> → <code>archive</code>（HTTP 拉 raw 文件 / zip）；
+   - <strong>其它 host（代理域名、Gitee 等）→ <code>git</code>（走 <code>git clone</code>）</strong>；</li>
+<li>archive 分支逐个 GET <code>metadata.yaml</code> / <code>metadata.yml</code>，拼出的 URL 是：</li>
+</ol>
+<pre><code>https://raw.githubusercontent.com/{owner}/{repo}/HEAD/metadata.yaml
+</code></pre>
+<p>（显式带 <code>/tree/&lt;branch&gt;</code> 时改用该分支；不带分支时用 <code>HEAD</code>）</p>
+<ol start="4">
+<li>校验 UTF-8、≤1MB、YAML 合法、四个必填字段；</li>
+<li>下载 zip、解压、调用 <code>find_plugin_metadata_entry()</code> 定位 metadata（<strong>允许 zip 内有一层顶层目录</strong>）。</li>
+</ol>
+<p>若有独立的「GitHub 代理 / 镜像」输入框，代理前缀单独填那里，拼接规则是 <code>{代理前缀}/{raw文件URL}</code>。实测可用前缀：<code>https://ghfast.top</code>、<code>https://ghproxy.net</code>、<code>https://gh-proxy.com</code>。</p>
+<h3>方式三：本地 zip 导入</h3>
+<p>从本地文件/zip 导入，完全绕开 GitHub 访问，<strong>国内网络最稳</strong>。两种打包都合法：</p>
+<pre><code># 带顶层目录（安装器自动识别）
+astrbot_plugin_xxx/
+├── metadata.yaml
+└── main.py
+
+# 扁平（metadata.yaml 直接在 zip 根）
+metadata.yaml
+main.py
+</code></pre>
+<h3>方式四：终端手动克隆</h3>
+<pre><code class="language-bash">cd AstrBot/data/plugins
+git clone https://github.com/YourName/astrbot_plugin_xxx.git
+# 重启 AstrBot 或在 WebUI 点「重载插件」
+</code></pre>
+<h2>发布到插件市场</h2>
+<ol>
+<li>建 <strong>public</strong> 独立仓库，仓库根目录直接是插件文件（不要再套一层目录）；</li>
+<li><code>metadata.yaml</code> 的 <code>name</code> 与仓库名一致，<code>version</code> 每次发布递增；</li>
+<li>加 <code>logo.png</code>（1:1，推荐 256×256）；<code>desc</code> 控制在一两行内；</li>
+<li>清理 <code>.git/</code>、<code>__pycache__/</code>、<code>data/</code>、<code>node_modules/</code>；</li>
+<li>插件 zip <strong>≤ 16 MB</strong>，超限 CI 直接拒绝；</li>
+<li>到 <a href="https://docs.astrbot.app/dev/star/plugin-publish.html">AstrBot 插件发布页</a> 提交（需注册 AstrBot Cloud 账号），会跳转到 <code>AstrBotDevs/AstrBot</code> 仓库生成一个 Issue，等维护者审核；</li>
+<li>后续更新只需改 <code>version</code> 并 push，市场按版本号提示更新。</li>
+</ol>
+<h2>常见报错速查表</h2>
+<table>
+<thead>
+<tr>
+<th>报错</th>
+<th>真实原因</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>未在仓库根目录找到 metadata.yaml 或 metadata.yml。</code></td>
+<td><strong>多半是误报</strong>：安装器逐个 GET raw 文件，只要都没返回 200（超时、代理返回 404/403、或把代理前缀拼进地址导致改走 <code>git clone</code> 且克隆失败），就抛这句，而不是「网络不可达」。超时只有 15 秒</td>
+<td>① 地址栏只填标准 <code>github.com</code> 地址；② 代理前缀填独立输入框；③ 改用 zip 本地导入；④ 弱网重试一次</td>
+</tr>
+<tr>
+<td><code>请输入有效的 Git 仓库地址。</code></td>
+<td>URL 解析失败：带了不支持的 scheme、凭据、查询参数，或路径格式不对（<code>parts[2]</code> 必须是 <code>tree</code> 且长度 ≥4）</td>
+<td>用标准 <code>https://github.com/owner/repo</code></td>
+</tr>
+<tr>
+<td><code>TypeError: 不受支持的配置类型 number。支持的类型有：dict_keys([...])</code></td>
+<td><code>_conf_schema.json</code> 用了 <code>number</code></td>
+<td>改 <code>int</code> / <code>float</code>，见 <a href="#sec2">02 配置 Schema</a></td>
+</tr>
+<tr>
+<td><code>插件元数据校验失败：metadata.yaml 中缺少必需字段</code></td>
+<td>缺 <code>name/desc/version/author</code> 之一，或字段不是非空字符串</td>
+<td>补齐四个字段</td>
+</tr>
+<tr>
+<td><code>metadata.yaml 必须使用 UTF-8 编码</code> / <code>格式错误</code></td>
+<td>编码不是 UTF-8 或 YAML 不合法</td>
+<td>转 UTF-8（可带 BOM）</td>
+</tr>
+<tr>
+<td><code>压缩包不是合法的 AstrBot 插件：未找到 metadata.yaml 或 metadata.yml</code></td>
+<td>zip 里没有 metadata 文件</td>
+<td>确认打包包含根目录的 metadata</td>
+</tr>
+<tr>
+<td><code>Plugin xxx has neither main.py nor xxx.py; skipping it.</code></td>
+<td>目录里没有入口文件</td>
+<td>加 <code>main.py</code></td>
+</tr>
+<tr>
+<td><code>AttributeError: 'Xxx' object has no attribute 'context'</code></td>
+<td>没调 <code>super().__init__(context)</code></td>
+<td>补上</td>
+</tr>
+<tr>
+<td><code>TypeError: Image.__init__() missing 1 required positional argument: 'file'</code></td>
+<td><code>Image</code> 的 <code>file</code> 必填</td>
+<td><code>Image(file="")</code> 后再赋 <code>url</code></td>
+</tr>
+<tr>
+<td><code>Image processing in reply chain failed ... HTTP 400</code></td>
+<td>QQ 图片 rkey 失效 / 版本不匹配（预处理阶段 WARNING）</td>
+<td>无害但图进不了 LLM；用 <a href="#sec6">06 章</a> 的 <code>on_llm_request</code> 方案补图</td>
+</tr>
+<tr>
+<td><code>retcode=1400 packetBackend 不可用，不支持当前QQ版本架构</code></td>
+<td>QQ 版本超出协议端 Packet 映射（群文件链路）</td>
+<td>降 QQ 版本到协议端支持的范围，或换协议端；插件修不了</td>
+</tr>
+<tr>
+<td><code>Dependency conflict in plugin ...</code></td>
+<td><code>requirements.txt</code> 与主环境冲突</td>
+<td>精简依赖、放宽版本约束</td>
+</tr>
+</tbody>
+</table>
+<h2>调试流程</h2>
+<ol>
+<li><strong>看日志</strong>：<code>[Core][ERRO][v4.x.x] [star.star_manager:1440]: ----- Failed to load plugin xxx -----</code> 后面紧跟 Traceback，定位到具体行。</li>
+<li><strong>重载</strong>：改代码后在 WebUI 插件页点刷新图标；加载失败的插件在「加载失败插件」列表里点「重载」。</li>
+<li><strong>先看加载阶段，再看运行阶段</strong>：<code>_conf_schema.json</code> 非法、<code>metadata.yaml</code> 缺字段、<code>__init__</code> 抛异常都属于<strong>加载阶段</strong>，插件根本不会实例化；指令不触发、结果不返回属于<strong>运行阶段</strong>。</li>
+<li><strong>本地静态验证</strong>（不启动 AstrBot 也能查掉大半问题）：</li>
+</ol>
+<pre><code class="language-bash">python -m py_compile main.py
+python - &lt;&lt;'PY'
+import json, pathlib, tempfile, os
+from astrbot.core.config.default import DEFAULT_VALUE_MAP
+from astrbot.core.config.astrbot_config import AstrBotConfig
+from astrbot.core.star.updater import _PluginUpdater as U
+
+s = json.loads(pathlib.Path(&quot;_conf_schema.json&quot;).read_text(encoding=&quot;utf-8-sig&quot;))
+assert not {k: v[&quot;type&quot;] for k, v in s.items() if v[&quot;type&quot;] not in DEFAULT_VALUE_MAP}
+AstrBotConfig(config_path=os.path.join(tempfile.mkdtemp(), &quot;c.json&quot;), schema=s)
+print(&quot;schema OK&quot;)
+
+import yaml
+m = yaml.safe_load(pathlib.Path(&quot;metadata.yaml&quot;).read_text(encoding=&quot;utf-8&quot;))
+U.validate_plugin_metadata(m, &quot;metadata.yaml&quot;)
+print(&quot;metadata OK&quot;)
+PY
+</code></pre>
+<ol start="5">
+<li><strong>注册检查</strong>：导入模块后查 <code>star_handlers_registry.star_handlers_map</code>，确认装饰器都挂上了（要在导入之后查，否则是 0）。</li>
+<li><strong>zip 校验</strong>：</li>
+</ol>
+<pre><code class="language-python">from astrbot.core.star.updater import _PluginUpdater as U
+print(U.inspect_plugin_archive(&quot;plugin.zip&quot;))
+</code></pre>
+<h2>版本与环境</h2>
+<ul>
+<li>4.29.4 要求 <strong>Python ≥ 3.12</strong>，沙盒/部署环境用 3.11 会装不上；</li>
+<li>手机端「AstrBot 泡泡版」内置的就是 AstrBot 组件，插件机制与桌面版一致；</li>
+<li>三套文件系统互不相通：泡泡版 App 内部、NapCat 容器 <code>/root/napcat_instances/...</code>、以及其它 AI 客户端的 Linux 工作区/Rootfs。要改哪边的文件，就得用哪边自己的终端。</li>
+</ul></section><section id="sec9"><h1>09 版本差异与避坑清单</h1>
+<h2>4.29.4 相对旧版的关键变化</h2>
+<p>以下均为源码核对结论，升级插件时优先检查这几项。</p>
+<table>
+<thead>
+<tr>
+<th>变化</th>
+<th>旧版</th>
+<th>4.29.4</th>
+<th>影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Python 要求</td>
+<td>3.10 / 3.11 可用</td>
+<td><strong>≥ 3.12</strong></td>
+<td>3.11 环境装不上 4.29.4；语法可用 3.12 特性</td>
+</tr>
+<tr>
+<td><code>@register</code> 装饰器</td>
+<td>需要装饰插件类</td>
+<td><strong>已废弃</strong>（<code>[DEPRECATED]</code>），自动识别 <code>Star</code> 子类</td>
+<td>保留不报错但无意义，新代码不要写</td>
+</tr>
+<tr>
+<td>媒体模块路径</td>
+<td><code>astrbot.core.utils.media_resolver</code></td>
+<td><strong><code>astrbot.core.utils.media_utils</code></strong>（类仍叫 <code>MediaResolver</code>）</td>
+<td>引用旧路径的插件 <code>ImportError</code></td>
+</tr>
+<tr>
+<td><code>MediaResolver</code> 方法</td>
+<td>旧接口</td>
+<td><code>as_path()</code> / <code>to_base64_data()</code> / <code>to_data_url()</code> / <code>to_path()</code> / <code>to_bytes()</code></td>
+<td>按新名调整</td>
+</tr>
+<tr>
+<td>配置注入</td>
+<td>部分版本只传 <code>context</code></td>
+<td><code>star_cls_type(context=..., config=AstrBotConfig)</code>，若 <code>TypeError</code> 回退只传 <code>context</code></td>
+<td>建议 <code>__init__(self, context, config=None)</code></td>
+</tr>
+<tr>
+<td><code>AstrBotConfig</code></td>
+<td>—</td>
+<td>dict 子类，带 <code>save_config()</code></td>
+<td>可直接 <code>cfg["KEY"]</code>、<code>cfg.get()</code></td>
+</tr>
+<tr>
+<td>配置 schema 类型</td>
+<td>文档写 9 种</td>
+<td><strong>10 种</strong>（新增 <code>file</code>），仍<strong>无 <code>number</code></strong></td>
+<td>见 <a href="#sec2">02 章</a></td>
+</tr>
+<tr>
+<td>图片预处理失败</td>
+<td>直接报错/丢弃</td>
+<td>判为「可恢复错误」，跳过图片并塞 <code>TextPart("[Image unavailable]")</code></td>
+<td>补图插件必须清占位</td>
+</tr>
+<tr>
+<td><code>on_llm_request</code> 时序</td>
+<td>—</td>
+<td><code>collect_initial_request</code> <strong>之后</strong>、<code>prepare_request_images</code> <strong>之前</strong></td>
+<td>补图/改提示的正确位置</td>
+</tr>
+<tr>
+<td>图片标准化</td>
+<td>—</td>
+<td><code>prepare_request_images</code> → <code>MediaResolver</code> 支持 <code>data:</code> / <code>file://</code> / 本地路径</td>
+<td>插件塞本地路径或 data URI 都会被正确消费</td>
+</tr>
+<tr>
+<td>引用图片兜底</td>
+<td>无</td>
+<td>内置 <code>core/utils/quoted_message/image_resolver.py</code>，多参数名 <code>get_image</code> + <code>get_file</code> 兜底</td>
+<td>写图片插件应照抄该兜底顺序</td>
+</tr>
+<tr>
+<td>Agent 相关钩子</td>
+<td>无</td>
+<td>新增 <code>on_agent_begin</code> / <code>on_agent_done</code> / <code>on_using_llm_tool</code> / <code>on_llm_tool_respond</code> 等</td>
+<td>更细的介入点</td>
+</tr>
+<tr>
+<td>插件随附 Skills</td>
+<td>—</td>
+<td><code>skills/</code> 目录自动纳入 Skill Manager</td>
+<td>新增能力</td>
+</tr>
+<tr>
+<td>配置自动迁移</td>
+<td>—</td>
+<td>导入新版会迁移 <code>cmd_config.json</code>（补新增项、移除废弃项如 <code>provider_settings.llm_compress_keep_recent</code>）</td>
+<td>属 AstrBot 自身行为，仅影响本地配置文件</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>官方文档也提示：<code>docs.astrbot.app/dev/plugin.html</code> 已迁移到 <code>/dev/star/plugin.html</code>，而后者标注「v4.5.7 之后已过时」，当前应看 <a href="https://docs.astrbot.app/dev/star/plugin-new.html"><code>plugin-new.html</code></a>。网上大量教程停留在旧版，遇到冲突以源码为准。</p>
+</blockquote>
+<h2>避坑清单（逐条可核对）</h2>
+<h3>加载阶段（插件根本起不来）</h3>
+<ul>
+<li>[ ] <code>metadata.yaml</code> 在<strong>根目录</strong>，四个必填字段齐全且非空字符串。</li>
+<li>[ ] 入口是 <code>main.py</code>（或 <code>&lt;目录名&gt;.py</code>），类继承 <code>Star</code>。</li>
+<li>[ ] <code>_conf_schema.json</code> 的 <code>type</code> 全在 10 种白名单内，<strong>没有 <code>number</code></strong>。</li>
+<li>[ ] <code>__init__</code> 调用了 <code>super().__init__(context)</code>，且不在构造函数里抛异常。</li>
+<li>[ ] <code>requirements.txt</code> 不与主环境冲突，依赖可安装。</li>
+<li>[ ] 没有残留 <code>__pycache__/</code>、<code>.git/</code> 被打进发布 zip。</li>
+</ul>
+<h3>运行阶段</h3>
+<ul>
+<li>[ ] 处理函数是插件类的 <code>async def</code>，前两个参数 <code>self, event</code>。</li>
+<li>[ ] 用 <code>from astrbot.api.event import filter</code> 导入，没被内置 <code>filter</code> 覆盖。</li>
+<li>[ ] 用 <code>yield event.plain_result(...)</code> / <code>chain_result(...)</code>，不是 <code>print</code>。</li>
+<li>[ ] 日志用 <code>astrbot.api.logger</code> 或 <code>self.logger</code>，不是 <code>logging</code>。</li>
+<li>[ ] 网络请求用异步库，不用 <code>requests</code>。</li>
+<li>[ ] 数值配置读取后自己 <code>float()</code> / <code>int()</code> 归一化（面板可能存成字符串）。</li>
+<li>[ ] 遍历引用消息图片时覆盖了 <code>Reply.chain</code>。</li>
+<li>[ ] <code>event.bot</code> 取值前判断平台，调用 <code>call_action</code> 有 try/except。</li>
+<li>[ ] 持久化数据写到 <code>StarTools.get_data_dir()</code> 或 <code>data/</code> 下。</li>
+</ul>
+<h3>发布阶段</h3>
+<ul>
+<li>[ ] 仓库 public，根目录直接是插件文件。</li>
+<li>[ ] <code>name</code> 与仓库名一致，<code>version</code> 已递增。</li>
+<li>[ ] zip ≤ 16 MB，含 <code>logo.png</code> 更佳。</li>
+<li>[ ] README 写明指令、配置项、依赖、灵感来源与许可证。</li>
+</ul>
+<h3>安装阶段</h3>
+<ul>
+<li>[ ] 地址栏只填标准 <code>github.com</code> 地址，代理前缀填独立输入框。</li>
+<li>[ ] 国内网络优先用 zip 本地导入。</li>
+<li>[ ] 知道「未在仓库根目录找到 metadata.yaml」多为网络误报，不去瞎改仓库结构。</li>
+</ul>
+<h2>两个真实事故复盘</h2>
+<h3>事故 A：<code>type: number</code> 让插件整体加载失败</h3>
+<p>日志：</p>
+<pre><code>[star.star_manager:1443] TypeError: 不受支持的配置类型 number。
+支持的类型有：dict_keys(['int', 'float', 'bool', 'string', 'text', 'list', 'file', 'object', 'template_list', 'dict'])
+</code></pre>
+<p>根因：<code>_conf_schema.json</code> 里 <code>MAX_IMAGE_MB</code>、<code>CACHE_TTL_SEC</code> 写成 <code>"type": "number"</code>。4.29.4 的 <code>AstrBotConfig._config_schema_to_default_config()</code> 遇到白名单外的类型直接抛错，发生在 <code>star_manager.load()</code> 构造配置时，因此<strong>整个插件加载失败</strong>，不是某个配置失效。</p>
+<p>修复：改 <code>float</code> / <code>int</code>；并加一个回归测试，用 <code>DEFAULT_VALUE_MAP</code> 校验所有 <code>type</code> + 真实构造一次 <code>AstrBotConfig(schema=...)</code>。注意这类问题<strong>只测插件逻辑导入是测不出来的</strong>，必须走加载路径。</p>
+<h3>事故 B：安装器报「未找到 metadata.yaml」但文件明明在</h3>
+<p>根因：安装器对 <code>raw.githubusercontent.com/.../HEAD/metadata.yaml</code> 的请求全部非 200（网络超时 / 代理异常 / 把代理前缀拼进地址栏导致改走 <code>git clone</code> 且克隆失败），代码里 <code>metadata is None</code> 就抛「未在仓库根目录找到」，<strong>不区分文件不存在与网络失败</strong>。</p>
+<p>修复：不用改仓库结构。地址栏填标准地址、代理单独填、或直接用 zip 导入。</p>
+<h2>验证清单（交付/发布前跑一遍）</h2>
+<pre><code class="language-bash"># 1) 语法
+python -m py_compile main.py
+
+# 2) 元数据 + 配置 schema
+python tests/verify_examples.py       # 见仓库 tests/
+
+# 3) 装饰器注册
+python - &lt;&lt;'PY'
+import importlib.util, sys
+from pathlib import Path
+root = Path(&quot;.&quot;)
+spec = importlib.util.spec_from_file_location(&quot;p&quot;, root/&quot;main.py&quot;, submodule_search_locations=[str(root)])
+m = importlib.util.module_from_spec(spec); sys.modules[&quot;p&quot;] = m; spec.loader.exec_module(m)
+from astrbot.core.star.register.star_handler import star_handlers_registry
+print(len([h for h in star_handlers_registry.star_handlers_map.values() if &quot;p&quot; == h.handler_module_path]))
+PY
+
+# 4) zip 合法性
+python - &lt;&lt;'PY'
+from astrbot.core.star.updater import _PluginUpdater as U
+print(U.inspect_plugin_archive(&quot;plugin.zip&quot;))
+PY
+</code></pre></section></main></div></body></html>
