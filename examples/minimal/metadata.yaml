@@ -1,0 +1,12 @@
+name: astrbot_plugin_guide_hello
+display_name: 指南示例·最小插件
+short_desc: 5 分钟可跑的最小插件
+desc: |
+  AstrBot v4.29.4 插件开发指南配套示例。
+  演示：指令注册、带参指令、消息结果、生命周期钩子、插件专属 logger。
+version: 1.0.0
+author: Guide
+repo: https://github.com/FrostsAfterglow/astrbot-plugin-guide-4.29.4
+astrbot_version: ">=4.16,<5"
+tags:
+  - 示例

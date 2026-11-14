@@ -1,0 +1,15 @@
+name: astrbot_plugin_guide_advanced
+display_name: 指南示例·配置与钩子
+short_desc: 配置 Schema、指令组、权限、LLM 钩子、平台 API 综合示例
+desc: |
+  AstrBot v4.29.4 插件开发指南配套进阶示例。
+  演示：_conf_schema.json 全部常用类型、配置读取与归一化、
+  指令组与权限过滤、on_llm_request 修改系统提示、OneBot call_action 安全调用。
+version: 1.0.0
+author: Guide
+repo: https://github.com/FrostsAfterglow/astrbot-plugin-guide-4.29.4
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - aiocqhttp
+tags:
+  - 示例

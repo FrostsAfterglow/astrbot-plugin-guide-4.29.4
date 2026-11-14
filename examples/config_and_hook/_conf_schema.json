@@ -1,0 +1,50 @@
+{
+  "ENABLED": {
+    "description": "是否启用本插件的全部功能",
+    "type": "bool",
+    "default": true
+  },
+  "PROMPT_SUFFIX": {
+    "description": "追加到 LLM 系统提示末尾的文字",
+    "type": "text",
+    "default": "请用简洁的中文回答。"
+  },
+  "MAX_ITEMS": {
+    "description": "单次最多处理条数（整数示例；注意不能用 number）",
+    "type": "int",
+    "default": 10,
+    "slider": {"min": 1, "max": 100, "step": 1}
+  },
+  "RATIO": {
+    "description": "比例阈值（小数示例）",
+    "type": "float",
+    "default": 0.75
+  },
+  "MODE": {
+    "description": "运行模式",
+    "type": "string",
+    "default": "normal",
+    "options": ["normal", "verbose"],
+    "labels": ["常规", "详细"]
+  },
+  "WHITELIST": {
+    "description": "允许的会话 ID 列表",
+    "type": "list",
+    "default": [],
+    "items": {"type": "string"}
+  },
+  "ADVANCED": {
+    "description": "嵌套对象示例",
+    "type": "object",
+    "items": {
+      "timeout": {"type": "int", "default": 30},
+      "retry": {"type": "bool", "default": false}
+    }
+  },
+  "API_TOKEN": {
+    "description": "可选令牌（面板遮罩，不加密落盘）",
+    "type": "string",
+    "default": "",
+    "secret": true
+  }
+}
